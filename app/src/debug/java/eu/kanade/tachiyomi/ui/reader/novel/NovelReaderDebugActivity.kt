@@ -84,11 +84,18 @@ class NovelReaderDebugActivity : BaseActivity() {
             // mangaId is filled from the persisted parent, the rest still carries placeholder ids.
             NovelMapper.toChapter(novel, chapter, sourceOrder = index.toLong()).copy(mangaId = storedManga.id)
         }
-        val storedChapter = chapterRepository.updateFromRemote(
+        // `updateFromRemote` is a sync: it returns only what it actually inserted, so on a second run the
+        // chapters are already there and it returns nothing. The chapter is then read back instead, which
+        // makes seeding idempotent across launches.
+        chapterRepository.updateFromRemote(
             removedIds = emptyList(),
             added = chapters,
             updated = emptyList(),
-        ).first()
+        )
+        val storedChapter = chapterRepository.getChapterByUrlAndMangaId(
+            url = chapters.first().url,
+            mangaId = storedManga.id,
+        ) ?: error("El capítulo ${chapters.first().url} no quedó persistido")
 
         chapterContentRepository.save(storedChapter.id, demoSource.getChapterContent(sourceChapters.first()))
         return storedChapter.id

@@ -97,6 +97,10 @@ class NovelReaderViewModel(
                 historyWrittenFor = null
 
                 _position.value = getReadingProgress.await(chapterId).toReadingPosition()
+                logcat(LogPriority.INFO) {
+                    "[novel-progress] LOAD chapter=$chapterId blocks=${loaded?.blocks?.size} " +
+                        "restored=$_position.value"
+                }
                 _content.value = loaded
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to load novel chapter $chapterId" }
@@ -122,6 +126,7 @@ class NovelReaderViewModel(
     fun saveProgress(chapterId: Long, position: ReadingPosition) {
         viewModelScope.launch {
             val safe = position.normalized()
+            logcat(LogPriority.INFO) { "[novel-progress] SAVE chapter=$chapterId $safe" }
             saveReadingProgress.await(
                 chapterId,
                 ReadingProgress(

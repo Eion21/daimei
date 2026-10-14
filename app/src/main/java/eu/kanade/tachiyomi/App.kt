@@ -64,7 +64,6 @@ import mihon.core.metro.AppCoroutineScope
 import mihon.core.metro.GraphProvider
 import mihon.core.migration.Migration
 import mihon.core.migration.Migrator
-import mihon.telemetry.TelemetryConfig
 import org.conscrypt.Conscrypt
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.Preference
@@ -134,8 +133,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         Injekt = InjektScope(MetroInjektRegistrar(application = this, graphProvider = this))
         graph.inject(this)
 
-        TelemetryConfig.init(applicationContext)
-
         GlobalExceptionHandler.initialize(applicationContext, CrashActivity::class.java)
 
         // TLS 1.3 support for Android < 10
@@ -174,16 +171,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                     cancelNotification(Notifications.ID_INCOGNITO_MODE)
                 }
             }
-            .launchIn(scope)
-
-        privacyPreferences.analytics
-            .changes()
-            .onEach(TelemetryConfig::setAnalyticsEnabled)
-            .launchIn(scope)
-
-        privacyPreferences.crashlytics
-            .changes()
-            .onEach(TelemetryConfig::setCrashlyticsEnabled)
             .launchIn(scope)
 
         basePreferences.hardwareBitmapThreshold.let { preference ->

@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.novel
 
 import android.os.Bundle
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import app.novel.source.demo.DemoSource
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
+import eu.kanade.tachiyomi.util.view.setComposeContent
 import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import tachiyomi.data.novel.NovelContentDir
@@ -55,7 +55,9 @@ class NovelReaderDebugActivity : BaseActivity() {
                 .onFailure { failure.value = it.stackTraceToString() }
         }
 
-        setContent {
+        // The app's own extension, not AndroidX's: it is the one that provides `LocalMetroViewModelFactory`, which
+        // `metroViewModel()` needs to resolve the reader's ViewModel.
+        setComposeContent {
             when {
                 failure.value != null -> Message("No se pudo preparar el capítulo:\n${failure.value}")
                 chapterId.value != null -> NovelReaderHost(chapterId = chapterId.value!!)

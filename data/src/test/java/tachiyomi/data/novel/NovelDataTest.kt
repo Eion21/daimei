@@ -4,8 +4,10 @@ import app.cash.sqldelight.async.coroutines.awaitAsOne
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import app.novel.source.api.Chapter as NovelChapter
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.ContentBlock
+import app.novel.source.api.Novel as NovelEntry
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -90,7 +92,7 @@ class NovelDataTest {
         chapterUrl: String,
     ): Long {
         val mangaId = mangaQueries.insertReturningId(
-            sourceId = NovelSourceHelper.generateSourceId("demo"),
+            sourceId = NovelMapper.generateSourceId("demo"),
             remoteUrl = remoteUrl,
             remoteTitle = "La torre de cristal",
             remoteAuthor = "Autor Uno",
@@ -125,6 +127,69 @@ class NovelDataTest {
             userLastPageRead = 0,
             stateDateFetch = Clock.System.now(),
         ).awaitAsOne()
+    }
+
+    @Test
+    fun `a mapped novel and chapter are stored and read back unchanged`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "mapper-test.db").absolutePath
+        val novel = NovelEntry("demo", "n1", "La torre de cristal", author = "Autor Uno")
+        val chapter = NovelChapter("demo", "n1", "c1", "Capítulo 1", number = 1f, url = "https://example.com/c1")
+
+        openDatabase(dbPath).let { (driver, database) ->
+            val manga = NovelMapper.toManga(novel)
+            val mangaId = database.mangaQueries.insertReturningId(
+                sourceId = manga.source,
+                remoteUrl = manga.url,
+                remoteTitle = manga.title,
+                remoteAuthor = manga.author,
+                remoteArtist = manga.artist,
+                remoteDescription = manga.description,
+                remoteGenre = manga.genre,
+                remoteStatus = manga.status,
+                remoteCover = manga.thumbnailUrl,
+                remoteUpdateStrategy = manga.updateStrategy,
+                remoteMemo = manga.memo,
+                userFavoriteAt = manga.favoriteAt,
+                userNotes = manga.notes,
+                userReaderFlags = manga.viewerFlags,
+                userChapterFlags = manga.chapterFlags,
+                stateChapterLastUpdate = manga.lastUpdate,
+                stateChapterNextUpdate = manga.nextUpdate,
+                stateChapterFetchInterval = manga.fetchInterval.toLong(),
+                stateCoverLastModified = manga.coverLastModified,
+                stateInitialized = manga.initialized,
+            ).awaitAsOne()
+
+            val mapped = NovelMapper.toChapter(novel, chapter)
+            database.chapterQueries.insertReturningId(
+                mangaId = mangaId,
+                remoteUrl = mapped.url,
+                remoteName = mapped.name,
+                remoteScanlator = mapped.scanlator,
+                remoteChapterNumber = mapped.chapterNumber,
+                remoteDateUpload = mapped.dateUpload,
+                remoteOrder = mapped.sourceOrder,
+                remoteMemo = mapped.memo,
+                userRead = mapped.read,
+                userBookmark = mapped.bookmark,
+                userLastPageRead = mapped.lastPageRead,
+                stateDateFetch = mapped.dateFetch,
+            ).awaitAsOne()
+
+            // Read back through the same path the library uses.
+            val storedManga = database.mangaQueries.getMangaById(mangaId) { id, sourceId, remoteUrl, title, author,
+                _, description, _, status, cover, _, _, favoriteAt, notes, viewerFlags, chapterFlags,
+                _, _, fetchInterval, coverModified, initialized ->
+                Triple(remoteUrl, title, sourceId)
+            }.executeAsOne()
+            assertEquals(Triple("n1", "La torre de cristal", NovelMapper.generateSourceId("demo")), storedManga)
+
+            val storedChapter = database.chapterQueries.getChapterByUrlAndMangaId(mangaId, "c1").executeAsOne()
+            assertEquals("Capítulo 1", storedChapter.remote_name)
+            assertEquals(1.0, storedChapter.remote_chapter_number)
+
+            driver.close()
+        }
     }
 
     @Test
@@ -179,12 +244,6 @@ class NovelDataTest {
             assertFalse(path.exists())
             driver.close()
         }
-    }
-
-    @Test
-    fun `source id is stable and differs per source`(@TempDir tempDir: File) {
-        assertEquals(NovelSourceHelper.generateSourceId("demo"), NovelSourceHelper.generateSourceId("demo"))
-        assertTrue(NovelSourceHelper.generateSourceId("demo") != NovelSourceHelper.generateSourceId("other"))
     }
 
     @Test

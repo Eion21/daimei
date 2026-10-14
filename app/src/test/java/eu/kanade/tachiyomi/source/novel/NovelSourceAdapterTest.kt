@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.source.novel
 
-import app.novel.source.api.Chapter as NovelChapter
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.Novel
 import app.novel.source.api.NovelPage
@@ -19,6 +18,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.data.novel.NovelMapper
 import tachiyomi.domain.source.model.StubSource
+import app.novel.source.api.Chapter as NovelChapter
 import tachiyomi.domain.source.model.Source as DomainSource
 
 class NovelSourceAdapterTest {
@@ -72,8 +72,14 @@ class NovelSourceAdapterTest {
 
         assertEquals("Novela de prueba con contenido determinista.", update.manga.description)
         assertEquals(listOf("c1", "c2", "c3", "c4", "c5"), update.chapters.map { it.url })
-        assertEquals(listOf("Capítulo 1", "Capítulo 5"), listOf(update.chapters.first().name, update.chapters.last().name))
-        assertEquals(listOf(1f, 5f), listOf(update.chapters.first().chapter_number, update.chapters.last().chapter_number))
+        assertEquals(
+            listOf("Capítulo 1", "Capítulo 5"),
+            listOf(update.chapters.first().name, update.chapters.last().name),
+        )
+        assertEquals(
+            listOf(1f, 5f),
+            listOf(update.chapters.first().chapter_number, update.chapters.last().chapter_number),
+        )
     }
 
     @Test
@@ -99,7 +105,8 @@ class NovelSourceAdapterTest {
         val fixture = NovelSourceAdapter(FixtureSource())
         val manga = fixture.getPopularManga(1).mangas.first()
 
-        val chapter = fixture.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true).chapters.single()
+        val update = fixture.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true)
+        val chapter = update.chapters.single()
 
         assertEquals(-1f, chapter.chapter_number)
     }
@@ -109,7 +116,8 @@ class NovelSourceAdapterTest {
         val fixture = NovelSourceAdapter(FixtureSource())
         val manga = fixture.getPopularManga(1).mangas.first()
 
-        val chapter = fixture.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true).chapters.single()
+        val update = fixture.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true)
+        val chapter = update.chapters.single()
         val memo = NovelMapper.toChapter(FixtureSource.novel, FixtureSource.chapter).memo
 
         assertEquals(FixtureSource.sourceInfo.id, memo["novelSourceId"]?.jsonPrimitive?.content)
@@ -124,7 +132,8 @@ class NovelSourceAdapterTest {
     fun `chapter memo omits the chapter url when the novel source does not provide one`() = runBlocking {
         val manga = adapter.getPopularManga(1).mangas.first()
 
-        val chapter = adapter.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true).chapters.first()
+        val update = adapter.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true)
+        val chapter = update.chapters.first()
 
         assertNull(chapter.memo["novelChapterUrl"])
         assertEquals("demo", chapter.memo["novelSourceId"]?.jsonPrimitive?.content)
@@ -134,7 +143,8 @@ class NovelSourceAdapterTest {
     @Test
     fun `getPageList explains that novel text does not go through the page list`() = runBlocking {
         val manga = adapter.getPopularManga(1).mangas.first()
-        val chapter = adapter.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true).chapters.first()
+        val update = adapter.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true)
+        val chapter = update.chapters.first()
 
         val error = runCatching { adapter.getPageList(chapter) }.exceptionOrNull()
 

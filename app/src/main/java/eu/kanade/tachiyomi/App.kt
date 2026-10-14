@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
 import logcat.LogPriority
 import logcat.LogcatLogger
+import app.novel.source.demo.DemoSource
 import mihon.app.di.AppGraph
 import mihon.app.di.injekt.MetroInjektRegistrar
 import mihon.core.metro.AppCoroutineScope
@@ -113,6 +114,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     private val disableIncognitoReceiver = DisableIncognitoReceiver()
 
+    val sourceRegistry = app.novel.runtime.SourceRegistry()
+
     @SuppressLint("LaunchActivityFromNotification")
     override fun onCreate() {
         super<Application>.onCreate()
@@ -132,6 +135,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
         Injekt = InjektScope(MetroInjektRegistrar(application = this, graphProvider = this))
         graph.inject(this)
+        sourceRegistry.register(DemoSource())
 
         GlobalExceptionHandler.initialize(applicationContext, CrashActivity::class.java)
 

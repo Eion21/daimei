@@ -26,3 +26,12 @@ ON CONFLICT(chapter_id) DO UPDATE SET
 
 delete:
 DELETE FROM reading_progress WHERE chapter_id = :chapterId;
+
+-- One row per chapter that has a saved position, keyed by chapter id, for a single manga. The join goes through
+-- `chapter` rather than reading the progress table whole, so the chapter list costs one query instead of one per
+-- chapter, and a manga whose chapters are all images returns nothing at all.
+getPercentByMangaId:
+SELECT chapter.id, reading_progress.percent
+FROM reading_progress
+INNER JOIN chapter ON chapter.id = reading_progress.chapter_id
+WHERE chapter.manga_id = :mangaId;

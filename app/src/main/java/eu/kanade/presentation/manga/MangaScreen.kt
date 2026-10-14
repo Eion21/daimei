@@ -60,6 +60,8 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.ui.manga.ChapterList
 import eu.kanade.tachiyomi.ui.manga.MangaViewModel
+import eu.kanade.tachiyomi.ui.manga.imageChapterProgressPage
+import eu.kanade.tachiyomi.ui.manga.novelChapterProgressPercent
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.roundedfilled.PlayArrow
@@ -741,6 +743,14 @@ private fun LazyListScope.sharedChapterItems(
                 MissingChapterCountListItem(count = item.count)
             }
             is ChapterList.Item -> {
+                // Both branches answer the same question: where the reader stopped in a chapter they have not
+                // finished. A novel's position is not a page number, so it fills the same slot with a percentage
+                // instead. Only the novel reader writes `reading_progress`, so holding one is what makes a chapter
+                // a novel chapter; every other chapter keeps the page-based text it has always had.
+                val readProgressText = novelChapterProgressPercent(item.chapter.read, item.novelReadProgress)
+                    ?.let { stringResource(MR.strings.read_progress_percent, it) }
+                    ?: imageChapterProgressPage(item.chapter.read, item.chapter.lastPageRead)
+                        ?.let { stringResource(MR.strings.chapter_progress, it + 1) }
                 MangaChapterListItem(
                     title = if (manga.displayMode == Manga.CHAPTER_DISPLAY_NUMBER) {
                         stringResource(
@@ -751,14 +761,7 @@ private fun LazyListScope.sharedChapterItems(
                         item.chapter.name
                     },
                     date = relativeDateText(item.chapter.dateUpload),
-                    readProgress = item.chapter.lastPageRead
-                        .takeIf { !item.chapter.read && it > 0L }
-                        ?.let {
-                            stringResource(
-                                MR.strings.chapter_progress,
-                                it + 1,
-                            )
-                        },
+                    readProgress = readProgressText,
                     scanlator = item.chapter.scanlator.takeIf { !it.isNullOrBlank() },
                     read = item.chapter.read,
                     bookmark = item.chapter.bookmark,

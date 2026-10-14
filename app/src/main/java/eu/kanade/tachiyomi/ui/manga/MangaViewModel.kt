@@ -100,11 +100,13 @@ import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.model.applyFilter
+import tachiyomi.domain.novel.repository.ReadingProgressRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.isLocal
 import kotlin.math.floor
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
 
 @AssistedInject
@@ -132,6 +134,7 @@ class MangaViewModel(
     private val updateManga: UpdateManga,
     private val getCategories: GetCategories,
     private val getTracks: GetTracks,
+    private val readingProgressRepository: ReadingProgressRepository,
     private val addTracks: AddTracks,
     private val setMangaCategories: SetMangaCategories,
     private val filterChaptersForDownload: FilterChaptersForDownload,
@@ -219,11 +222,15 @@ class MangaViewModel(
             .distinctUntilChanged(),
         downloadCache.changes.pausedWhileUnsubscribed(),
         downloadManager.queueState.pausedWhileUnsubscribed(),
-    ) { (manga, chapters), _, _ ->
+        // Empty for a manga of image chapters, since only the novel reader writes a position. Read for every manga
+        // anyway: the join is one indexed query, and a novel's source resolves to a stub before it is installed,
+        // so asking the source what it is would be a second way to get this wrong.
+        readingProgressRepository.getPercentByMangaId(mangaId).distinctUntilChanged(),
+    ) { (manga, chapters), _, _, novelProgress ->
         MangaAndChapters(
             manga = manga,
             source = sourceManager.getOrStub(manga.source),
-            chapters = chapters.toChapterListItems(manga),
+            chapters = chapters.toChapterListItems(manga, novelProgress),
         )
     }
 
@@ -587,7 +594,10 @@ class MangaViewModel(
         return downloadProgress[chapterId] ?: 0
     }
 
-    private fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
+    private fun List<Chapter>.toChapterListItems(
+        manga: Manga,
+        novelProgress: Map<Long, Float>,
+    ): List<ChapterList.Item> {
         val isLocal = manga.isLocal()
         val queuedDownloads = if (isLocal) emptyMap() else downloadManager.getQueuedDownloadsByChapterId()
         val downloadedChapterIds = if (isLocal) emptySet() else downloadManager.getDownloadedChapterIds(this, manga)
@@ -603,6 +613,7 @@ class MangaViewModel(
             ChapterList.Item(
                 chapter = chapter,
                 downloadState = downloadState,
+                novelReadProgress = novelProgress[chapter.id],
             )
         }
     }
@@ -1209,8 +1220,38 @@ sealed class ChapterList {
         val chapter: Chapter,
         val downloadState: Download.State,
         val selected: Boolean = false,
+        /**
+         * How far through the chapter the novel reader got, from 0 to 1, or null when it has not been opened.
+         *
+         * Kept apart from [Chapter.lastPageRead], which is the image reader's page index and stays 0 for a novel:
+         * overloading it would make "page 3 of 10" and "30% of the way through" indistinguishable to every reader
+         * of that field.
+         */
+        val novelReadProgress: Float? = null,
     ) : ChapterList() {
         val id = chapter.id
         val isDownloaded = downloadState == Download.State.DOWNLOADED
     }
+}
+
+/**
+ * The page number an image chapter stopped at, for the chapter list's progress slot.
+ *
+ * Null means there is nothing worth showing: never opened, or already read, in which case the slot stays empty
+ * rather than repeating the page count of a finished chapter.
+ */
+internal fun imageChapterProgressPage(read: Boolean, lastPageRead: Int): Int? {
+    return lastPageRead.takeIf { !read && it > 0 }
+}
+
+/**
+ * A novel chapter's saved fraction as the whole percentage the list shows, or null when there is nothing to show.
+ *
+ * Null for a chapter that was never opened, and null for one already read, exactly like [imageChapterProgressPage]:
+ * a finished chapter's title is greyed out on its own, so repeating where it stopped is noise. The rounding is to
+ * nearest so 45.6% reads as 46%, and the clamp keeps a corrupt row from reaching the UI as more than 100%.
+ */
+internal fun novelChapterProgressPercent(read: Boolean, percent: Float?): Int? {
+    if (read) return null
+    return percent?.let { (it * 100).roundToInt().coerceIn(0, 100) }
 }

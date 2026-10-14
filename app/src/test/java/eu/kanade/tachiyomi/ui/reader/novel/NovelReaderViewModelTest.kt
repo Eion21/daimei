@@ -101,6 +101,11 @@ class NovelReaderViewModelTest {
         override suspend fun delete(chapterId: Long) {
             stored = null
         }
+
+        // The chapter list's per-manga read, which this fake has no story for: the reader view model never asks
+        // for it. Spelled out rather than defaulted on the interface so a fake that needs the behaviour has to
+        // say so.
+        override fun getPercentByMangaId(mangaId: Long): Flow<Map<Long, Float>> = emptyFlow()
     }
 
     private class FakeChapterRepository : ChapterRepository {

@@ -47,13 +47,17 @@ import mihon.core.metro.IsDebugBuild
 import mihon.domain.extension.interactor.GetExtensionStoreCountAsFlow
 import mihon.domain.extension.repository.ExtensionStoreRepository
 import nl.adaptivity.xmlutil.serialization.XML
+import tachiyomi.data.novel.NovelContentDir
 import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.ResetCategoryFlags
+import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.ResetViewerFlags
+import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.novel.repository.ChapterContentRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StoragePreferences
 import tachiyomi.domain.track.interactor.UpsertTrack
@@ -86,6 +90,12 @@ interface AppGraph : ViewModelGraph {
     val uiPreferences: UiPreferences
     val readerPreferences: ReaderPreferences
     val novelReaderPreferences: NovelReaderPreferences
+
+    val novelContentDir: NovelContentDir
+
+    val novelMangaRepository: MangaRepository
+    val novelChapterRepository: ChapterRepository
+    val novelChapterContentRepository: ChapterContentRepository
     val networkPreferences: NetworkPreferences
     val libraryPreferences: LibraryPreferences
     val sourcePreferences: SourcePreferences

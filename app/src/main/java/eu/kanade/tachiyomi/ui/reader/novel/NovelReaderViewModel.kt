@@ -17,10 +17,14 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
+import tachiyomi.domain.history.interactor.UpsertHistory
+import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.novel.interactor.GetChapterContent
 import tachiyomi.domain.novel.interactor.GetReadingProgress
 import tachiyomi.domain.novel.interactor.SaveReadingProgress
 import tachiyomi.domain.novel.repository.ReadingProgress
+import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * State for one novel chapter.
@@ -36,6 +40,7 @@ class NovelReaderViewModel(
     private val getReadingProgress: GetReadingProgress,
     private val saveReadingProgress: SaveReadingProgress,
     private val updateChapter: UpdateChapter,
+    private val upsertHistory: UpsertHistory,
 ) : ViewModel() {
 
     private val _content = MutableStateFlow<ChapterContent?>(null)
@@ -54,8 +59,26 @@ class NovelReaderViewModel(
     /** Block count of the loaded chapter, kept so [saveProgress] can compute a percentage. */
     private var blockCount = 0
 
+    /** When the current chapter was opened, so finishing it can report how long that took. */
+    private var chapterReadStartTime: Instant? = null
+
+    /**
+     * The chapter whose history entry has already been written, or null.
+     *
+     * `history.upsert` adds to `read_duration` instead of replacing it, so the same session writing it twice would
+     * double the time. The host reports reaching the end of a chapter on every debounced progress emission, which
+     * makes a repeat the normal case rather than an edge one.
+     */
+    private var historyWrittenFor: Long? = null
+
     /**
      * Resolves the content and the saved position for [chapterId].
+     *
+     * The position is resolved *before* the content is published, and that order is the contract the reader is built
+     * on: `NovelReaderScreen` restores as soon as it is handed content and cannot restore again until the content
+     * identity changes. Publishing content first therefore opens the chapter at the top even when a position was
+     * saved — and the position the reader then reports from that top gets persisted straight back over the saved
+     * one, so the chapter opens at the top from then on.
      *
      * A failure leaves [content] null and is logged rather than thrown: the host renders the reader's loading
      * placeholder in that state, and a throw here would take the whole screen down for a recoverable miss.
@@ -66,17 +89,20 @@ class NovelReaderViewModel(
             try {
                 val loaded = getChapterContent.await(chapterId)
                 if (loaded == null) {
-                    logcat(LogPriority.WARN) { "No novel content stored for chapter $chapterId" }
+                    logcat(LogPriority.WARN) { "No novel content available for chapter $chapterId" }
                 }
 
                 blockCount = loaded?.blocks?.size ?: 0
-                _content.value = loaded
+                chapterReadStartTime = Clock.System.now()
+                historyWrittenFor = null
+
                 _position.value = getReadingProgress.await(chapterId).toReadingPosition()
+                _content.value = loaded
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to load novel chapter $chapterId" }
                 blockCount = 0
-                _content.value = null
                 _position.value = ReadingPosition.START
+                _content.value = null
             } finally {
                 _isLoading.value = false
             }
@@ -108,10 +134,28 @@ class NovelReaderViewModel(
         }
     }
 
-    /** Marks the chapter read. Separate from [saveProgress] on purpose. */
+    /**
+     * Marks the chapter read and records the read in history. Separate from [saveProgress] on purpose.
+     *
+     * In Mihon these are two different tables. `chapter.user_read` is what greys the chapter out in the library;
+     * History is a separate screen backed by the `history` table, which only ever learns about a chapter through
+     * [UpsertHistory]. Flipping the flag alone leaves a finished chapter invisible on that screen, which is why
+     * both are written here and nowhere else.
+     *
+     * At most one history row is written per chapter per load. [historyWrittenFor] is set before the writes rather
+     * than after them, so two emissions arriving before either write completes still produce a single row.
+     */
     fun markRead(chapterId: Long) {
         viewModelScope.launch {
+            if (historyWrittenFor == chapterId) return@launch
+
+            val endTime = Clock.System.now()
+            val sessionReadDuration = chapterReadStartTime?.let { (endTime - it).inWholeMilliseconds } ?: 0
+            chapterReadStartTime = null
+            historyWrittenFor = chapterId
+
             updateChapter.await(ChapterUpdate(chapterId) { read = true })
+            upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
         }
     }
 

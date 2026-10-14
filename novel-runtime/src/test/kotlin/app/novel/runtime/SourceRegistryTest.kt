@@ -4,6 +4,7 @@ import app.novel.source.api.NovelSource
 import app.novel.source.api.SourceInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
 class SourceRegistryTest {
@@ -46,5 +47,49 @@ class SourceRegistryTest {
         assertEquals(2, all.size)
         assertEquals("Demo", all[0].info.name)
         assertEquals("Demo2", all[1].info.name)
+    }
+
+    @Test
+    fun `resolves a source from the numeric id Mihon stores`() {
+        registry.register(source1)
+        registry.register(source2)
+
+        assertEquals(source1, registry.getBySourceId(NovelSourceId.generate("demo")))
+        assertEquals(source2, registry.getBySourceId(NovelSourceId.generate("demo2")))
+    }
+
+    @Test
+    fun `an id no registered source derives resolves to nothing`() {
+        registry.register(source1)
+
+        assertNull(registry.getBySourceId(NovelSourceId.generate("nope")))
+        // -1 is what Mihon stores for "no source", so it must never resolve to a source.
+        assertNull(registry.getBySourceId(-1L))
+    }
+
+    @Test
+    fun `an empty registry resolves nothing`() {
+        assertNull(registry.getBySourceId(NovelSourceId.generate("demo")))
+    }
+
+    @Test
+    fun `two sources are told apart by their numeric ids`() {
+        registry.register(source1)
+        registry.register(source2)
+
+        // The lookup is by derived id, not by registration order or by name, so neither source can be handed
+        // back for the other.
+        assertNotEquals(source1, registry.getBySourceId(NovelSourceId.generate("demo2")))
+        assertNotEquals(source2, registry.getBySourceId(NovelSourceId.generate("demo")))
+    }
+
+    @Test
+    fun `re-registering a source replaces it under both ids`() {
+        registry.register(source1)
+        registry.register(source1)
+
+        assertEquals(1, registry.all().size)
+        assertEquals(source1, registry.get("demo"))
+        assertEquals(source1, registry.getBySourceId(NovelSourceId.generate("demo")))
     }
 }

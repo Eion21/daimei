@@ -22,6 +22,12 @@ dependencies {
     implementation(projects.core.common)
     implementation(projects.core.metro)
 
+    // `api` and not `implementation` because `:novel-runtime` types are genuinely part of this module's public
+    // surface: `GetChapterContent` takes a `SourceRegistry` in its constructor, so Metro has to be able to resolve
+    // it from `:app`, and `:data` needs the same module for `NovelMapper` to delegate the source-id derivation
+    // instead of keeping a second copy of the hash that could drift.
+    api(projects.novelRuntime)
+
     implementation(libs.metro.runtime)
     implementation(libs.bundles.kotlinx.coroutines)
     implementation(libs.bundles.serialization)

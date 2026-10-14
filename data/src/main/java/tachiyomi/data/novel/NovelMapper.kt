@@ -1,5 +1,6 @@
 package tachiyomi.data.novel
 
+import app.novel.runtime.NovelSourceId
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -8,7 +9,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import java.security.MessageDigest
 import app.novel.source.api.Chapter as NovelChapter
 import app.novel.source.api.Novel as NovelEntry
 
@@ -23,13 +23,13 @@ object NovelMapper {
 
     /**
      * Stable numeric id for a source, derived from its string id the same way [eu.kanade.tachiyomi.source
-     * .online.HttpSource] derives its own. MD5 is used rather than [String.hashCode], whose value is not
-     * guaranteed across runtimes, which would orphan a user's library after an update.
+     * .online.HttpSource] derives its own.
+     *
+     * The derivation itself now lives in [NovelSourceId], in the pure-Kotlin module `:domain` can also see, so
+     * that resolving a stored row back to a source reuses this exact hash instead of a second copy of it that
+     * could drift. The signature and every id it produces are unchanged; only the location moved.
      */
-    fun generateSourceId(infoId: String): Long {
-        val bytes = MessageDigest.getInstance("MD5").digest("novel/$infoId".toByteArray())
-        return (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
-    }
+    fun generateSourceId(infoId: String): Long = NovelSourceId.generate(infoId)
 
     fun toManga(novel: NovelEntry): Manga = Manga(
         id = NO_ID,

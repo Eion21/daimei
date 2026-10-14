@@ -3,7 +3,10 @@ package app.novel.reader.compose
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -120,7 +123,9 @@ fun NovelReaderScreen(
             settings = effectiveSettings,
             listState = listState,
             contentPadding = NO_CONTENT_PADDING,
-            modifier = modifier,
+            // The reader draws its own full-bleed background, so the system bars are consumed as padding
+            // rather than left to the host chrome: otherwise the chapter title sits under the status bar.
+            modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars),
         )
     } else {
         LoadingPlaceholder(theme = effectiveSettings.theme, modifier = modifier)

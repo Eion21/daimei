@@ -36,6 +36,7 @@ import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.base.delegate.SecureActivityDelegateImpl
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.reader.novel.NovelReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.setting.track.BaseOAuthLoginActivity
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -84,6 +85,7 @@ interface AppGraph : ViewModelGraph {
     val basePreferences: BasePreferences
     val uiPreferences: UiPreferences
     val readerPreferences: ReaderPreferences
+    val novelReaderPreferences: NovelReaderPreferences
     val networkPreferences: NetworkPreferences
     val libraryPreferences: LibraryPreferences
     val sourcePreferences: SourcePreferences

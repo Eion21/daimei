@@ -1,13 +1,13 @@
 package tachiyomi.data.novel
 
-import app.novel.source.api.Chapter as NovelChapter
-import app.novel.source.api.Novel as NovelEntry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
+import app.novel.source.api.Chapter as NovelChapter
+import app.novel.source.api.Novel as NovelEntry
 
 class NovelMapperTest {
 

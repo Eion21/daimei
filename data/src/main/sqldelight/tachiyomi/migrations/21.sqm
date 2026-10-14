@@ -1,0 +1,7 @@
+import kotlin.Int;
+import kotlin.time.Instant;
+
+-- The reader stores a logical position so it survives a font-size change, which means the offset inside a block
+-- matters as much as the block itself. Existing rows keep the fraction they can express: the top of the block.
+
+ALTER TABLE reading_progress ADD COLUMN block_fraction REAL NOT NULL DEFAULT 0;

@@ -18,10 +18,18 @@ class ReadingProgressRepositoryImpl(
 ) : ReadingProgressRepository {
     override suspend fun get(chapterId: Long): ReadingProgress? {
         return database.reading_progressQueries
-            .getByChapterId(chapterId) { _: Long, blockIndex: Int, blockOffsetPx: Int, percent: Double, _: kotlin.time.Instant ->
+            .getByChapterId(chapterId) {
+                    _: Long,
+                    blockIndex: Int,
+                    blockOffsetPx: Int,
+                    blockFraction: Double,
+                    percent: Double,
+                    _: kotlin.time.Instant,
+                ->
                 ReadingProgress(
                     blockIndex = blockIndex,
                     blockOffsetPx = blockOffsetPx,
+                    blockFraction = blockFraction.toFloat(),
                     percent = percent.toFloat(),
                 )
             }
@@ -33,6 +41,7 @@ class ReadingProgressRepositoryImpl(
             chapterId = chapterId,
             blockIndex = progress.blockIndex,
             blockOffsetPx = progress.blockOffsetPx,
+            blockFraction = progress.blockFraction.toDouble(),
             percent = progress.percent.toDouble(),
             stateDateUpdate = Clock.System.now(),
         )

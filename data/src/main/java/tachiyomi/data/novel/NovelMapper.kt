@@ -1,7 +1,5 @@
 package tachiyomi.data.novel
 
-import app.novel.source.api.Chapter as NovelChapter
-import app.novel.source.api.Novel as NovelEntry
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -11,6 +9,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.security.MessageDigest
+import app.novel.source.api.Chapter as NovelChapter
+import app.novel.source.api.Novel as NovelEntry
 
 /**
  * Translates the novel contract into the domain models Mihon already stores, so a novel reuses the `manga`

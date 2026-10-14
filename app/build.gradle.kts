@@ -219,6 +219,8 @@ dependencies {
     implementation(projects.novelApi)
     implementation(projects.novelRuntime)
     implementation(projects.novelDemoSource)
+    implementation(projects.readerCore)
+    implementation(projects.readerCompose)
     implementation(projects.presentationCore)
     implementation(projects.presentationWidget)
     implementation(projects.telemetry)

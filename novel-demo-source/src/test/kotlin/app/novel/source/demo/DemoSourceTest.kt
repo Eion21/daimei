@@ -1,10 +1,10 @@
 package app.novel.source.demo
 
 import app.novel.source.api.ContentBlock
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import kotlinx.coroutines.runBlocking
 
 class DemoSourceTest {
     private val source = DemoSource()

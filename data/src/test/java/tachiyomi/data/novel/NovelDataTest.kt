@@ -4,10 +4,8 @@ import app.cash.sqldelight.async.coroutines.awaitAsOne
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import app.novel.source.api.Chapter as NovelChapter
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.ContentBlock
-import app.novel.source.api.Novel as NovelEntry
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -33,6 +31,8 @@ import tachiyomi.data.UpdateStrategyColumnAdapter
 import tachiyomi.domain.novel.repository.ReadingProgress
 import java.io.File
 import kotlin.time.Clock
+import app.novel.source.api.Chapter as NovelChapter
+import app.novel.source.api.Novel as NovelEntry
 
 /**
  * Proves the novel tables survive a round trip through the real database, including the foreign keys onto
@@ -177,9 +177,29 @@ class NovelDataTest {
             ).awaitAsOne()
 
             // Read back through the same path the library uses.
-            val storedManga = database.mangaQueries.getMangaById(mangaId) { id, sourceId, remoteUrl, title, author,
-                _, description, _, status, cover, _, _, favoriteAt, notes, viewerFlags, chapterFlags,
-                _, _, fetchInterval, coverModified, initialized ->
+            val storedManga = database.mangaQueries.getMangaById(mangaId) {
+                    id,
+                    sourceId,
+                    remoteUrl,
+                    title,
+                    author,
+                    _,
+                    description,
+                    _,
+                    status,
+                    cover,
+                    _,
+                    _,
+                    favoriteAt,
+                    notes,
+                    viewerFlags,
+                    chapterFlags,
+                    _,
+                    _,
+                    fetchInterval,
+                    coverModified,
+                    initialized,
+                ->
                 Triple(remoteUrl, title, sourceId)
             }.executeAsOne()
             assertEquals(Triple("n1", "La torre de cristal", NovelMapper.generateSourceId("demo")), storedManga)
@@ -204,7 +224,7 @@ class NovelDataTest {
                 ContentBlock.Divider,
             ),
         )
-        val progress = ReadingProgress(blockIndex = 2, blockOffsetPx = 140, percent = 0.42f)
+        val progress = ReadingProgress(blockIndex = 2, blockOffsetPx = 140, blockFraction = 0.5f, percent = 0.42f)
 
         val chapterId: Long
         // Write, then drop the connection so the next open reads from disk rather than from memory.
@@ -261,8 +281,9 @@ class NovelDataTest {
         // `create` stamps the newest version, so it is rewound to make the migration do real work.
         exec("PRAGMA user_version = 19")
 
-        // Migration N is generated as `oldVersion <= N && newVersion > N`, so reaching 21 is what runs file 20.
-        (Database.Schema.migrate(driver, 19, 21) as QueryResult.AsyncValue<Unit>).await()
+        // SQLDelight generates migration N as `oldVersion <= N && newVersion > N`, so `migrate(N, N + 1)` runs
+        // file N and nothing else. A wider range re-runs the earlier migrations as well.
+        (Database.Schema.migrate(driver, 20, 21) as QueryResult.AsyncValue<Unit>).await()
 
         val tables = driver.executeQuery(
             null,
@@ -280,6 +301,55 @@ class NovelDataTest {
             setOf("chapter_content", "reading_progress"),
             (tables as QueryResult.Value<List<String>>).value.toSet(),
         )
+        driver.close()
+    }
+
+    @Test
+    fun `migration 21 adds the block fraction to an existing progress row`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "fraction-test.db").absolutePath
+        val driver = JdbcSqliteDriver("jdbc:sqlite:$dbPath")
+        val database = createDatabase(driver)
+        (Database.Schema.create(driver) as QueryResult.AsyncValue<Unit>).await()
+
+        suspend fun exec(sql: String) = driver.execute(null, sql, 0).await()
+
+        val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+
+        // Rewind to the shape the table had before the fraction existed, with a row already in it. These are raw
+        // SQLite statements, so no SQLDelight `AS Int` adapter annotations here.
+        exec("DROP TABLE reading_progress")
+        exec(
+            """
+            CREATE TABLE reading_progress(
+                chapter_id INTEGER NOT NULL PRIMARY KEY,
+                block_index INTEGER NOT NULL,
+                block_offset_px INTEGER NOT NULL,
+                percent REAL NOT NULL,
+                state_date_update INTEGER NOT NULL,
+                FOREIGN KEY(chapter_id) REFERENCES chapter(id) ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+        exec(
+            "INSERT INTO reading_progress(chapter_id, block_index, block_offset_px, percent, state_date_update) " +
+                "VALUES ($chapterId, 7, 0, 0.35, 0)",
+        )
+        exec("PRAGMA user_version = 20")
+
+        (Database.Schema.migrate(driver, 21, 22) as QueryResult.AsyncValue<Unit>).await()
+
+        // The pre-existing row survives and reads back as "top of block 7", which is the only thing it could
+        // have meant before the fraction was recorded.
+        val restored = ReadingProgressRepositoryImpl(database).get(chapterId)
+        assertEquals(7, restored?.blockIndex)
+        assertEquals(0.35f, restored?.percent)
+        assertEquals(0f, restored?.blockFraction)
+
+        // And a fresh save round-trips the fraction.
+        ReadingProgressRepositoryImpl(database)
+            .save(chapterId, ReadingProgress(3, 0, blockFraction = 0.25f, percent = 0.5f))
+        assertEquals(0.25f, ReadingProgressRepositoryImpl(database).get(chapterId)?.blockFraction)
+
         driver.close()
     }
 

@@ -14,6 +14,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.preference.PreferenceManager
+import app.novel.source.demo.DemoSource
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.memory.MemoryCache
@@ -58,7 +59,6 @@ import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
 import logcat.LogPriority
 import logcat.LogcatLogger
-import app.novel.source.demo.DemoSource
 import mihon.app.di.AppGraph
 import mihon.app.di.injekt.MetroInjektRegistrar
 import mihon.core.metro.AppCoroutineScope

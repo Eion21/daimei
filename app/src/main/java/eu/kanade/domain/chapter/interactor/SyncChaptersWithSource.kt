@@ -103,13 +103,13 @@ class SyncChaptersWithSource(
 // be scraped out of "Chapter 12". A novel source states the number outright, and the heuristics only know
 // English markers — scraping "Capítulo 1" yields nothing and would replace a known number with -1, which the
 // chapter list and the history view both render as "N/A". So a source that already supplied a number keeps it.
-val recognizedChapters = preparedChapters
-    .zip(ChapterRecognition.parseChapterNumbers(manga.title, preparedChapters)) { chapter, numbering ->
-        val recognized = numbering.chapter?.let(ChapterRecognition::toDouble) ?: -1.0
-        chapter.copy(
-            chapterNumber = if (chapter.chapterNumber >= 0) chapter.chapterNumber else recognized,
-        )
-    }
+        val recognizedChapters = preparedChapters
+            .zip(ChapterRecognition.parseChapterNumbers(manga.title, preparedChapters)) { chapter, numbering ->
+                val recognized = numbering.chapter?.let(ChapterRecognition::toDouble) ?: -1.0
+                chapter.copy(
+                    chapterNumber = if (chapter.chapterNumber >= 0) chapter.chapterNumber else recognized,
+                )
+            }
 
         for (chapter in recognizedChapters) {
             if (!sourceUrls.add(chapter.url)) continue

@@ -53,7 +53,10 @@ class NovelSourceAdapterTest {
 
     @Test
     fun `getLatestUpdates returns the popular listing because the novel contract has no latest concept`() = runBlocking {
-        assertEquals(adapter.getPopularManga(1).mangas.map { it.url }, adapter.getLatestUpdates(1).mangas.map { it.url })
+        assertEquals(
+            adapter.getPopularManga(1).mangas.map { it.url },
+            adapter.getLatestUpdates(1).mangas.map { it.url },
+        )
     }
 
     @Test

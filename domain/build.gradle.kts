@@ -18,6 +18,7 @@ kotlin {
 
 dependencies {
     implementation(projects.sourceApi)
+    implementation(projects.novelApi)
     implementation(projects.core.common)
     implementation(projects.core.metro)
 

@@ -30,6 +30,7 @@ kotlin {
 
 dependencies {
     implementation(projects.sourceApi)
+    implementation(projects.novelApi)
     implementation(projects.domain)
     implementation(projects.core.common)
     implementation(projects.core.metro)
@@ -45,4 +46,9 @@ dependencies {
 
     implementation(libs.androidx.sqlite.bundled)
     implementation(libs.bundles.sqldelight)
+
+    testImplementation(libs.bundles.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.sqldelight.sqliteDriver)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }

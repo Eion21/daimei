@@ -1,0 +1,21 @@
+import kotlin.time.Instant;
+
+CREATE TABLE chapter_content(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    file_path TEXT NOT NULL,
+    state_date_download INTEGER AS Instant NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES chapter(id) ON DELETE CASCADE
+);
+
+getByChapterId:
+SELECT chapter_id, file_path, state_date_download FROM chapter_content WHERE chapter_id = :chapterId;
+
+upsert:
+INSERT INTO chapter_content(chapter_id, file_path, state_date_download)
+VALUES (:chapterId, :filePath, :stateDateDownload)
+ON CONFLICT(chapter_id) DO UPDATE SET
+    file_path = excluded.file_path,
+    state_date_download = excluded.state_date_download;
+
+delete:
+DELETE FROM chapter_content WHERE chapter_id = :chapterId;

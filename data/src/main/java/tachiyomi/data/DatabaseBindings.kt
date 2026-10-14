@@ -84,9 +84,17 @@ object DatabaseBindings {
                 user_last_page_readAdapter = IntColumnAdapter,
                 state_date_fetchAdapter = InstantColumnAdapter,
             ),
+            chapter_contentAdapter = Chapter_content.Adapter(
+                state_date_downloadAdapter = InstantColumnAdapter,
+            ),
             manga_trackAdapter = Manga_track.Adapter(
                 start_dateAdapter = InstantColumnAdapter,
                 finish_dateAdapter = InstantColumnAdapter,
+            ),
+            reading_progressAdapter = Reading_progress.Adapter(
+                block_indexAdapter = IntColumnAdapter,
+                block_offset_pxAdapter = IntColumnAdapter,
+                state_date_updateAdapter = InstantColumnAdapter,
             ),
         )
     }

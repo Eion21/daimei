@@ -75,9 +75,12 @@ fun ChapterBody(
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(BLOCK_SPACING),
     ) {
+        // The key is the block's index, and it must be: Compose saves per-item state across process death in a
+        // Bundle, which rejects any custom type and would throw on the first layout pass. Within one chapter the
+        // block order never changes, so the index identifies a block as well as anything else could.
         itemsIndexed(
             items = content.blocks,
-            key = { index, block -> BlockKey(index, block) },
+            key = { index, _ -> index },
         ) { _, block ->
             Box(
                 modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
@@ -126,16 +129,6 @@ private fun ChapterBlock(
         ContentBlock.Divider -> HorizontalDivider(color = dividerColor)
     }
 }
-
-/**
- * Item identity for a content block. Carrying the index together with the block itself means a block that moved
- * or was replaced is not mistaken for the block that used to occupy the slot, which is what lets Compose reuse
- * the right subcomposition instead of shifting the whole document.
- */
-private data class BlockKey(
-    val index: Int,
-    val block: ContentBlock,
-)
 
 /**
  * Headings follow the Material3 type scale but keep the reader's font family and text colour, because heading

@@ -1,5 +1,6 @@
 package tachiyomi.data.novel
 
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
@@ -33,7 +34,7 @@ class ReadingProgressRepositoryImpl(
                     percent = percent.toFloat(),
                 )
             }
-            .executeAsOneOrNull()
+            .awaitAsOneOrNull()
     }
 
     override suspend fun save(chapterId: Long, progress: ReadingProgress) {

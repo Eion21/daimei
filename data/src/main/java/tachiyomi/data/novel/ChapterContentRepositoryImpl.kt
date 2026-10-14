@@ -1,5 +1,6 @@
 package tachiyomi.data.novel
 
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import app.novel.source.api.ChapterContent
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
@@ -29,7 +30,7 @@ class ChapterContentRepositoryImpl(
     override suspend fun get(chapterId: Long): ChapterContent? {
         val filePath = database.chapter_contentQueries
             .getByChapterId(chapterId) { _: Long, path: String, _: kotlin.time.Instant -> path }
-            .executeAsOneOrNull()
+            .awaitAsOneOrNull()
         // The three ways this can come back empty are different problems, so each is logged on its own
         // rather than collapsing into a silent null.
         if (filePath == null) {
@@ -68,7 +69,7 @@ class ChapterContentRepositoryImpl(
     override suspend fun delete(chapterId: Long) {
         val filePath = database.chapter_contentQueries
             .getByChapterId(chapterId) { _: Long, path: String, _: kotlin.time.Instant -> path }
-            .executeAsOneOrNull()
+            .awaitAsOneOrNull()
         filePath?.let { File(it).delete() }
         database.chapter_contentQueries.delete(chapterId)
     }

@@ -1,11 +1,13 @@
 package eu.kanade.tachiyomi.source
 
+import app.novel.runtime.SourceRegistry
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -30,8 +32,16 @@ class AndroidSourceManager(
     private val extensionManager: ExtensionManager,
     private val sourceRepository: StubSourceRepository,
     private val localSource: LocalSource,
+    sourceRegistry: SourceRegistry,
     private val downloadManager: Lazy<DownloadManager>,
 ) : SourceManager {
+
+    /**
+     * One adapter per registered novel source, built once. Building them here rather than per emission means the
+     * seed map and the `sources` flow hand out the same instances, so a novel is never equal-and-yet-distinct from
+     * itself.
+     */
+    private val novelSources: List<NovelSourceAdapter> = sourceRegistry.all().map(::NovelSourceAdapter)
 
     /**
      * Null until the extensions have loaded, so that nothing observes the empty seed value.
@@ -49,7 +59,8 @@ class AndroidSourceManager(
             extensionManager.loadedExtensionsFlow
                 .collectLatest { extensions ->
                     val mutableMap = ConcurrentHashMap<Long, Source>(
-                        mapOf(LocalSource.ID to localSource),
+                        mapOf(LocalSource.ID to localSource) +
+                            novelSources.associateBy(NovelSourceAdapter::id),
                     )
                     extensions.forEach { extension ->
                         extension.sources.forEach {

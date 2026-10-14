@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.novel.isNovelSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -87,8 +88,12 @@ abstract class SearchViewModel(
     }
 
     open suspend fun getEnabledSources(): List<Source> {
-        return sourceManager.getAll()
-            .filter { (it.lang in enabledLanguages || it.isLocal()) && "${it.id}" !in disabledSources }
+        val sources = sourceManager.getAll()
+        return sources
+            .filter {
+                (it.lang in enabledLanguages || it.isLocal() || it.isNovelSource()) &&
+                    "${it.id}" !in disabledSources
+            }
             .sortedWith(
                 compareBy(
                     { "${it.id}" !in pinnedSources },

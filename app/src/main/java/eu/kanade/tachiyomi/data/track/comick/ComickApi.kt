@@ -56,7 +56,7 @@ class ComickApi(
                     buildString {
                         append("Mihon/v${BuildConfig.VERSION_NAME} ")
                         append("(${BuildConfig.APPLICATION_ID}) ${BuildConfig.COMMIT_SHA}) ")
-                        append("(Android) (https://github.com/mihonapp/mihon)")
+                        append("(Android) (https://github.com/placeholder/daimei)")
                     },
                 )
                 .header("Accept", jsonMime.toString())

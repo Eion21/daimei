@@ -162,7 +162,7 @@ object AboutScreen : Screen() {
                 item {
                     TextPreferenceWidget(
                         title = stringResource(MR.strings.privacy_policy),
-                        onPreferenceClick = { uriHandler.openUri("https://mihon.app/privacy/") },
+                        onPreferenceClick = { uriHandler.openUri("") },
                     )
                 }
 
@@ -176,7 +176,7 @@ object AboutScreen : Screen() {
                         LinkIcon(
                             label = stringResource(MR.strings.website),
                             icon = MaterialSymbols.Rounded.Public,
-                            url = "https://mihon.app",
+                            url = "",
                         )
                         LinkIcon(
                             label = "Discord",
@@ -186,22 +186,22 @@ object AboutScreen : Screen() {
                         LinkIcon(
                             label = "X",
                             icon = SimpleIcons.X,
-                            url = "https://x.com/mihonapp",
+                            url = "",
                         )
                         LinkIcon(
                             label = "Facebook",
                             icon = SimpleIcons.Facebook,
-                            url = "https://facebook.com/mihonapp",
+                            url = "",
                         )
                         LinkIcon(
                             label = "Reddit",
                             icon = SimpleIcons.Reddit,
-                            url = "https://www.reddit.com/r/mihonapp",
+                            url = "",
                         )
                         LinkIcon(
                             label = "GitHub",
                             icon = SimpleIcons.Github,
-                            url = "https://github.com/mihonapp",
+                            url = "",
                         )
                     }
                 }

@@ -76,7 +76,7 @@ import tachiyomi.presentation.core.util.collectAsState
 object SettingsDataScreen : SearchableSettings {
 
     val restorePreferenceKeyString = MR.strings.label_backup
-    const val HELP_URL = "https://mihon.app/docs/faq/storage"
+    const val HELP_URL = ""
 
     @ReadOnlyComposable
     @Composable

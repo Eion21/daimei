@@ -31,7 +31,7 @@ fun Screen.migrateSourceTab(): TabContent {
                 title = stringResource(MR.strings.migration_help_guide),
                 icon = MaterialSymbols.AutoMirroredRounded.Help,
                 onClick = {
-                    uriHandler.openUri("https://mihon.app/docs/guides/source-migration")
+                    uriHandler.openUri("")
                 },
             ),
         ),

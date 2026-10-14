@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.deeplink
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -13,7 +14,7 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -56,12 +57,14 @@ class DeepLinkScreen(
                             ),
                         )
                     } else {
-                        navigator.pop()
-                        ReaderActivity.newIntent(
-                            context,
-                            resultState.manga.id,
-                            resultState.chapterId,
-                        ).also(context::startActivity)
+                        // The reader is opened before this screen is popped, not after: popping disposes the
+                        // composition, which would cancel the coroutine still reading the chapter row, and the
+                        // activity would never start. The effect is keyed so a recomposition cannot open twice.
+                        val chapterId = resultState.chapterId
+                        LaunchedEffect(chapterId) {
+                            ChapterOpener.openChapter(context, resultState.manga.id, chapterId)
+                            navigator.pop()
+                        }
                     }
                 }
             }

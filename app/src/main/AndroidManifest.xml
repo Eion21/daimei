@@ -164,6 +164,13 @@
                 android:resource="@xml/s_pen_actions" />
         </activity>
 
+        <!-- The text reader. Same shape as ReaderActivity and same inherited app theme, but no `singleTask`:
+             a chapter id arrives as an intent extra and this activity has no `onNewIntent`, so a reused
+             instance would keep showing the chapter it was created for. -->
+        <activity
+            android:name=".ui.reader.novel.NovelReaderActivity"
+            android:exported="false" />
+
         <activity
             android:name=".ui.security.UnlockActivity"
             android:exported="false"

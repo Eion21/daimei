@@ -2,17 +2,26 @@ package eu.kanade.tachiyomi.ui.reader.novel
 
 import android.os.Bundle
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import app.novel.reader.core.ReaderTheme
 import app.novel.source.demo.DemoSource
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -26,6 +35,7 @@ import tachiyomi.data.novel.NovelMapper
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.novel.repository.ChapterContentRepository
+import tachiyomi.presentation.core.util.collectAsState
 import java.io.File
 
 /**
@@ -63,11 +73,64 @@ class NovelReaderDebugActivity : BaseActivity() {
         setComposeContent {
             when {
                 failure.value != null -> Message("No se pudo preparar el capítulo:\n${failure.value}")
-                chapterId.value != null -> NovelReaderHost(chapterId = chapterId.value!!)
+                chapterId.value != null -> Box(modifier = Modifier.fillMaxSize()) {
+                    NovelReaderHost(chapterId = chapterId.value!!)
+                    TypographyControls(
+                        preferences = graph.novelReaderPreferences,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
+                    )
+                }
                 else -> Message("Preparando el capítulo de demostración…")
             }
         }
     }
+
+    /**
+     * Direct access to the typography preferences, because the reader has no settings screen yet.
+     *
+     * These are the same `Preference` objects the real host reads, so what is exercised here is the production
+     * path: writing a preference here has to reach the open chapter and reflow it.
+     */
+    @Composable
+    private fun TypographyControls(
+        preferences: NovelReaderPreferences,
+        modifier: Modifier = Modifier,
+    ) {
+        val fontSize by preferences.fontSizeSp.collectAsState()
+        val lineHeight by preferences.lineHeightPercent.collectAsState()
+        val theme by preferences.theme.collectAsState()
+
+        Surface(
+            modifier = modifier,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Aa", fontSize = 12.sp)
+                TextButton(onClick = { preferences.fontSizeSp.set(fontSize - 2) }) { Text("−") }
+                Text("$fontSize sp")
+                TextButton(onClick = { preferences.fontSizeSp.set(fontSize + 2) }) { Text("+") }
+
+                TextButton(onClick = { preferences.lineHeightPercent.set(lineHeight - 10) }) { Text("↕−") }
+                TextButton(onClick = { preferences.lineHeightPercent.set(lineHeight + 10) }) { Text("↕+") }
+
+                TextButton(
+                    onClick = {
+                        val next = theme.next()
+                        preferences.theme.set(next)
+                    },
+                ) {
+                    Text(theme.name.take(3))
+                }
+            }
+        }
+    }
+
+    private fun ReaderTheme.next(): ReaderTheme =
+        ReaderTheme.entries[(ordinal + 1) % ReaderTheme.entries.size]
 
     /** Persists a demo novel and its first chapter, then returns the persisted chapter id. */
     private suspend fun seed(

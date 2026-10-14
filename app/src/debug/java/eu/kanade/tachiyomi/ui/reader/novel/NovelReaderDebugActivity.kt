@@ -18,12 +18,15 @@ import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import kotlinx.coroutines.launch
+import logcat.LogPriority
+import logcat.logcat
 import mihon.app.di.appGraph
 import tachiyomi.data.novel.NovelContentDir
 import tachiyomi.data.novel.NovelMapper
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.novel.repository.ChapterContentRepository
+import java.io.File
 
 /**
  * Debug-only harness that makes the novel reader reachable before the library is wired.
@@ -97,7 +100,14 @@ class NovelReaderDebugActivity : BaseActivity() {
             mangaId = storedManga.id,
         ) ?: error("El capítulo ${chapters.first().url} no quedó persistido")
 
-        chapterContentRepository.save(storedChapter.id, demoSource.getChapterContent(sourceChapters.first()))
+        val storedPath = chapterContentRepository.save(
+            storedChapter.id,
+            demoSource.getChapterContent(sourceChapters.first()),
+        )
+        logcat(LogPriority.INFO) {
+            "[novel-debug] mangaId=${storedManga.id} chapterId=${storedChapter.id} blocks=" +
+                "${sourceChapters.size} path=$storedPath exists=${File(storedPath).exists()}"
+        }
         return storedChapter.id
     }
 

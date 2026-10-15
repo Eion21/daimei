@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!--
+  Detail page: /novel/torre-de-cristal.html
+
+  The chapter list is read from .novel-detail .chapter-list. The ad block below carries a
+  fake .chapter-list pointing at a chapter that does not exist, and it sits outside
+  .novel-detail on purpose: a selector like "ul.chapter-list" alone would pick up
+  "torre-de-cristal-99.html" and the reader would offer a chapter that 404s.
+
+  Chapter hrefs are relative to this document (../chapter/...) exactly as a real site
+  would emit them, so url resolution has to be exercised too.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>La torre de cristal - Lector</title>
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/index.html">Inicio</a>
+    <a href="/search.html">Buscar</a>
+  </nav>
+
+  <main>
+    <article class="novel-detail" data-novel-id="torre-de-cristal">
+      <div class="novel-header">
+        <div class="novel-cover">
+          <img src="/covers/torre-de-cristal.jpg" alt="Portada de La torre de cristal">
+        </div>
+        <div class="novel-meta">
+          <h1 class="novel-title">La torre de cristal</h1>
+          <span class="novel-author">Ada Vergara</span>
+        </div>
+      </div>
+
+      <div class="novel-description">
+        <p>Unaginx ingeniera descubre que el edificio donde trabaja responde a un diseno
+           anterior a su construccion, y que el plano que lo documenta esta incompleto.</p>
+      </div>
+
+      <section class="chapter-section">
+        <h2>Capitulos</h2>
+        <ul class="chapter-list">
+          <li><a href="../chapter/torre-de-cristal-prologo.html">Prologo</a></li>
+          <li><a href="../chapter/torre-de-cristal-1.html">Capitulo 1: El ascensor</a></li>
+          <li><a href="../chapter/torre-de-cristal-2.html">Capitulo 2: La sala de mapas</a></li>
+          <li><a href="../chapter/torre-de-cristal-3.html">Capitulo 3: Viento</a></li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <div class="ad-slot" data-ad-network="fixture">
+    <p>Suscribete al capitulo semanal</p>
+    <ul class="chapter-list">
+      <li><a href="../chapter/torre-de-cristal-99.html">Capitulo 99: El que no existe</a></li>
+    </ul>
+  </div>
+
+  <aside class="sidebar-recommended">
+    <h2>Tambien te puede gustar</h2>
+    <ul class="chapter-list">
+      <li><a href="../chapter/quimera-urbana-1.html">Quimera urbana 1</a></li>
+    </ul>
+  </aside>
+
+  <script>window.__NOVEL__ = {"id": "torre-de-cristal", "chapters": 4};</script>
+</body>
+</html>

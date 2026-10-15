@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<!--
+  Chapter page: /chapter/torre-de-cristal-1.html
+
+  Blocks are read from .chapter-content only, so the <h1 class="chapter-title"> above it and
+  the sidebar below it are out of scope by construction.
+
+  The script, the style and the ad block sit INSIDE .chapter-content on purpose: scoping
+  alone does not save you here, they have to be stripped before the children are walked.
+  Otherwise the ad copy becomes a paragraph and the inline script text becomes another one.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Capitulo 1: El ascensor - Lector</title>
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/index.html">Inicio</a>
+    <a href="/search.html">Buscar</a>
+  </nav>
+
+  <main>
+    <article class="chapter">
+      <h1 class="chapter-title">Capitulo 1: El ascensor</h1>
+      <div class="chapter-content">
+        <h2>El ascensor</h2>
+        <p>El ascensor subia despacio, como si el edificio <em>estuviera pensando</em>.</p>
+        <p>Unanginecx seguro habia contado once pisos, pero el boton de la&nbsp;cabina marcaba trece.</p>
+        <p>&nbsp;</p>
+        <hr>
+        <p>Cundo llego al ultimo piso la puerta se abrio sola.</p>
+        <figure>
+          <img src="/images/torre-ascensor.jpg" alt="El ascensor de la torre">
+        </figure>
+        <p>Ahi adentro la esperaba el plano incompleto.</p>
+
+        <script>window.__CHAPTER_ADS__ = ["banner-a", "banner-b"];</script>
+        <style>.chapter-content p { margin: 0 0 1em; }</style>
+        <div class="ad-slot" data-ad-network="fixture">
+          <p>Patrocinado por el Sponsor Ficticio</p>
+          <img src="/ads/banner.gif" alt="banner">
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <nav class="chapter-nav">
+    <a class="prev-chapter" href="torre-de-cristal-prologo.html">Anterior</a>
+    <a class="next-chapter" href="torre-de-cristal-2.html">Siguiente</a>
+  </nav>
+
+  <aside class="sidebar-recommended">
+    <p>Recomendado para ti</p>
+  </aside>
+</body>
+</html>

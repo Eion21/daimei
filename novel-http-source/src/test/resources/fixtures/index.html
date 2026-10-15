@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<!--
+  Popular listing page: /index.html
+
+  The parser must read exactly the three cards inside #novel-list and nothing else.
+  The ad block and the sidebar deliberately clone the card markup (same classes, same
+  .novel-card) so that scoping to #novel-list is what keeps them out, not luck.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Novelas - Lector</title>
+  <script>window.__PAGE__ = {"page": 1, "totalPages": 1};</script>
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/index.html">Inicio</a>
+    <a href="/search.html">Buscar</a>
+    <a href="/generos.html">Generos</a>
+  </nav>
+
+  <div class="ad-slot" data-ad-network="fixture">
+    <a href="novel/curso-intensivo-de-cripto.html">
+      <span class="novel-card">
+        <span class="novel-title">Curso intensivo de cripto</span>
+        <span class="novel-author">Auspiciados del Valle S.L.</span>
+        <img class="novel-cover" src="/covers/ad-cripto.png" alt="">
+      </span>
+    </a>
+  </div>
+
+  <main>
+    <h1>Novelas destacadas</h1>
+    <ul id="novel-list" class="novel-grid">
+      <li class="novel-card">
+        <a href="novel/torre-de-cristal.html">
+          <img class="novel-cover" src="/covers/torre-de-cristal.jpg" alt="Portada de La torre de cristal">
+        </a>
+        <h3 class="novel-title">La torre de cristal</h3>
+        <span class="novel-author">Ada Vergara</span>
+      </li>
+      <li class="novel-card">
+        <a href="novel/cronicas-del-valle.html">
+          <img class="novel-cover" src="/covers/cronicas-del-valle.jpg" alt="Portada de Cronicas del valle">
+        </a>
+        <h3 class="novel-title">Cronicas del valle</h3>
+        <span class="novel-author">Bruno Salas</span>
+      </li>
+      <li class="novel-card">
+        <a href="novel/quimera-urbana.html">
+          <img class="novel-cover" src="/covers/quimera-urbana.jpg" alt="Portada de Quimera urbana">
+        </a>
+        <h3 class="novel-title">Quimera urbana</h3>
+        <span class="novel-author">Camila Nunez</span>
+      </li>
+    </ul>
+    <nav class="pagination">
+      <span class="page-current">1</span>
+    </nav>
+  </main>
+
+  <aside class="sidebar-recommended">
+    <h2>Recomendados</h2>
+    <div class="novel-card">
+      <a href="novel/quimera-urbana.html">
+        <img class="novel-cover" src="/covers/quimera-urbana.jpg" alt="">
+      </a>
+      <h3 class="novel-title">Quimera urbana</h3>
+      <span class="novel-author">Camila Nunez</span>
+    </div>
+  </aside>
+
+  <script src="/static/tracking.js"></script>
+</body>
+</html>

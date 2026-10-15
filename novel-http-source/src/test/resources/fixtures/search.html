@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<!--
+  Search results: /search.html?q=<query>
+
+  Same document shape as the listing, minus the pagination block. If the search
+  parser stopped being scoped to #novel-list this page would return the ad card too.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Buscar - Lector</title>
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/index.html">Inicio</a>
+    <a href="/search.html">Buscar</a>
+  </nav>
+
+  <div class="ad-slot" data-ad-network="fixture">
+    <a href="novel/curso-intensivo-de-cripto.html">
+      <span class="novel-card">
+        <span class="novel-title">Curso intensivo de cripto</span>
+        <span class="novel-author">Auspiciados del Valle S.L.</span>
+        <img class="novel-cover" src="/covers/ad-cripto.png" alt="">
+      </span>
+    </a>
+  </div>
+
+  <main>
+    <h1>Resultados</h1>
+    <ul id="novel-list" class="novel-grid">
+      <li class="novel-card">
+        <a href="novel/torre-de-cristal.html">
+          <img class="novel-cover" src="/covers/torre-de-cristal.jpg" alt="Portada de La torre de cristal">
+        </a>
+        <h3 class="novel-title">La torre de cristal</h3>
+        <span class="novel-author">Ada Vergara</span>
+      </li>
+    </ul>
+  </main>
+</body>
+</html>

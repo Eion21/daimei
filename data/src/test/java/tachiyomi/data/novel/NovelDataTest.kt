@@ -460,6 +460,108 @@ class NovelDataTest {
         }
     }
 
+    @Test
+    fun `the chapters of a manga whose content is cached come back in one read`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "cached-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val cachedChapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(cachedChapterId)
+            val uncachedChapterId = database.insertChapterOf(mangaId, "c2", "Capítulo 2")
+
+            val repository = ChapterContentRepositoryImpl(database, NovelContentDir(File(tempDir, "content")))
+            repository.save(cachedChapterId, ChapterContent(listOf(ContentBlock.Paragraph("hola"))))
+
+            val cached = repository.getCachedChapterIdsByMangaId(mangaId).first()
+            assertEquals(setOf(cachedChapterId), cached)
+            assertFalse(uncachedChapterId in cached)
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `a manga with nothing cached reads back as an empty set`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "no-content-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+
+            // A manga of image chapters never writes here at all, so the empty set is the normal answer, not an
+            // error case: the chapter list asks this for every manga it shows.
+            assertEquals(
+                emptySet<Long>(),
+                ChapterContentRepositoryImpl(database, NovelContentDir(File(tempDir, "content")))
+                    .getCachedChapterIdsByMangaId(mangaId)
+                    .first(),
+            )
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `one manga's cached content is never handed to another`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "content-leak-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val repository = ChapterContentRepositoryImpl(database, NovelContentDir(File(tempDir, "content")))
+
+            val cachedChapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val cachedMangaId = database.mangaIdOfChapter(cachedChapterId)
+            repository.save(cachedChapterId, ChapterContent(listOf(ContentBlock.Paragraph("hola"))))
+
+            // Identical source and chapter url, so only the manga_id join keeps this one out of the other's list.
+            val otherChapterId = database.insertNovelAndChapter(remoteUrl = "n2", chapterUrl = "c1")
+            val otherMangaId = database.mangaIdOfChapter(otherChapterId)
+
+            assertEquals(setOf(cachedChapterId), repository.getCachedChapterIdsByMangaId(cachedMangaId).first())
+            assertEquals(emptySet<Long>(), repository.getCachedChapterIdsByMangaId(otherMangaId).first())
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `content cached after the read starts showing up on its own`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "live-content-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            val repository = ChapterContentRepositoryImpl(database, NovelContentDir(File(tempDir, "content")))
+
+            // The query joins two tables, so this is only true if SQLDelight notifies on both of them and not
+            // just the one the save writes to. The chapter list is on screen while a chapter is cached, and has
+            // to learn about it without being rebuilt by hand.
+            val emitted = mutableListOf<Set<Long>>()
+            val collectJob = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                repository.getCachedChapterIdsByMangaId(mangaId).take(2).toList(emitted)
+            }
+
+            repository.save(chapterId, ChapterContent(listOf(ContentBlock.Paragraph("hola"))))
+            collectJob.join()
+
+            assertEquals(listOf(emptySet(), setOf(chapterId)), emitted)
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `deleting cached content takes the chapter back out of the cached set`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "delete-cached-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            val repository = ChapterContentRepositoryImpl(database, NovelContentDir(File(tempDir, "content")))
+
+            val path = File(repository.save(chapterId, ChapterContent(listOf(ContentBlock.Paragraph("hola")))))
+            assertEquals(setOf(chapterId), repository.getCachedChapterIdsByMangaId(mangaId).first())
+
+            repository.delete(chapterId)
+
+            // Both halves, because a row without its file would still read as downloaded and then fail to open,
+            // and a file without its row is invisible here and harmless.
+            assertEquals(emptySet<Long>(), repository.getCachedChapterIdsByMangaId(mangaId).first())
+            assertFalse(path.exists())
+            driver.close()
+        }
+    }
+
     /** The database without creating a schema, so a test can start from a migrated state. */
     private fun createDatabase(driver: SqlDriver): Database = Database(
         driver = driver,

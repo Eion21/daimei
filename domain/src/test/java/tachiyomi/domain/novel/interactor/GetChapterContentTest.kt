@@ -96,6 +96,11 @@ class GetChapterContentTest {
         override suspend fun delete(chapterId: Long) {
             cached -= chapterId
         }
+
+        // The per-manga cached set is the chapter list's business, not this interactor's: nothing here ever
+        // asks for it. Spelled out rather than defaulted on the interface so a fake that needs the behaviour has
+        // to say so.
+        override fun getCachedChapterIdsByMangaId(mangaId: Long): Flow<Set<Long>> = emptyFlow()
     }
 
     private class FakeChapterRepository(private val chapters: Map<Long, Chapter>) : ChapterRepository {

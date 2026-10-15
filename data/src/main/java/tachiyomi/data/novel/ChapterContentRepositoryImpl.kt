@@ -8,10 +8,12 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
+import tachiyomi.data.subscribeToList
 import tachiyomi.domain.novel.repository.ChapterContentRepository
 import java.io.File
 import kotlin.time.Clock
@@ -72,5 +74,19 @@ class ChapterContentRepositoryImpl(
             .awaitAsOneOrNull()
         filePath?.let { File(it).delete() }
         database.chapter_contentQueries.delete(chapterId)
+    }
+
+    /**
+     * The chapters of this manga that have content on disk, in one read.
+     *
+     * The join to `chapter` happens in SQL, so a manga of image chapters reads nothing and only the chapter
+     * list's own query is paid. The query listens on `chapter` and `chapter_content` alike, which is what lets
+     * a chapter saved from the reader become a downloaded row without the screen being rebuilt by hand.
+     */
+    override fun getCachedChapterIdsByMangaId(mangaId: Long): Flow<Set<Long>> {
+        return database.chapter_contentQueries
+            .getCachedChapterIdsByMangaId(mangaId)
+            .subscribeToList()
+            .map { it.toSet() }
     }
 }

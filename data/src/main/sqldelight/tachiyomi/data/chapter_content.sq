@@ -19,3 +19,13 @@ ON CONFLICT(chapter_id) DO UPDATE SET
 
 delete:
 DELETE FROM chapter_content WHERE chapter_id = :chapterId;
+
+-- Which of a manga's chapters have their text content on disk, keyed by chapter id. The join goes through
+-- `chapter` rather than reading `chapter_content` whole, so the chapter list costs one query instead of one
+-- per chapter, and a manga whose chapters are all images returns nothing at all. `chapter_content` stays the
+-- first table so this lands on `chapter_contentQueries`, next to the writes that notify it.
+getCachedChapterIdsByMangaId:
+SELECT chapter.id
+FROM chapter_content
+INNER JOIN chapter ON chapter.id = chapter_content.chapter_id
+WHERE chapter.manga_id = :mangaId;

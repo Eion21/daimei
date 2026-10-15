@@ -3,14 +3,19 @@ package tachiyomi.data.backup
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import app.novel.source.api.ChapterContent
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
+import tachiyomi.data.novel.NovelMapper
 import tachiyomi.domain.backup.model.RestoredHistory
 import tachiyomi.domain.backup.model.RestoredManga
 import tachiyomi.domain.backup.repository.RestoreRepository
@@ -19,6 +24,9 @@ import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.novel.repository.ChapterContentRepository
+import tachiyomi.domain.novel.repository.ReadingProgress
+import tachiyomi.domain.novel.repository.ReadingProgressRepository
 import tachiyomi.domain.track.model.Track
 import tachiyomi.domain.track.repository.TrackRepository
 import kotlin.math.max
@@ -32,6 +40,8 @@ class RestoreRepositoryImpl(
     private val mangaRepository: MangaRepository,
     private val chapterRepository: ChapterRepository,
     private val trackRepository: TrackRepository,
+    private val chapterContentRepository: ChapterContentRepository,
+    private val readingProgressRepository: ReadingProgressRepository,
 ) : RestoreRepository {
 
     override suspend fun getMangaUrlsBySourceId(): Map<Long, Set<String>> {
@@ -64,6 +74,7 @@ class RestoreRepositoryImpl(
             mangaRepository.setMangaCategories(manga.id, entry.categoryIds)
         }
         restoreChapters(manga, entry.chapters)
+        restoreNovelState(manga, entry)
         restoreTracking(manga, entry.tracks)
         restoreHistory(manga, entry.history)
         restoreExcludedScanlators(manga, entry.excludedScanlators)
@@ -217,6 +228,76 @@ class RestoreRepositoryImpl(
 
     private fun Chapter.forComparison() =
         this.copy(id = 0L, mangaId = 0L, dateFetch = Instant.DISTANT_PAST, dateUpload = null)
+
+    /**
+     * Puts back what only a novel chapter has: where the reader stopped inside its text, and the text itself.
+     *
+     * Runs after [restoreChapters] because both are keyed by chapter id, and that id only exists once the
+     * database has assigned it. `restoreChapters` does not hand the ids back, so they are read again here — the
+     * same way [restoreHistory] turns a chapter url into an id — and matched on the url, which is the one thing a
+     * backup and the restored row can agree on.
+     *
+     * Everything is behind the novel memo, so an image manga reads no further than the check and writes nothing.
+     * That is also why a novel whose source is not installed restores normally: nothing here asks a source for
+     * anything. The text goes to disk and the row that marks it as readable goes in beside it, so installing the
+     * source later finds the chapter already there.
+     *
+     * A payload that will not decode is dropped instead of thrown, and only for its own chapter: the rest of the
+     * backup still restores, which is why [RestoredManga] carries the JSON undecoded rather than as a type that
+     * would fail the whole file at deserialization.
+     */
+    private suspend fun restoreNovelState(manga: Manga, entry: RestoredManga) {
+        val novelChapters = chapterRepository.getChapterByMangaId(manga.id)
+            .filter { !NovelMapper.sourceId(it).isNullOrBlank() }
+        if (novelChapters.isEmpty()) return
+        val chapterByUrl = novelChapters.associateBy { it.url }
+
+        // Decoded before anything is written, so an undecodable payload is known to be a miss while the
+        // percentage below still has its block count, and so a later write failing cannot cost the position.
+        val contentByChapterId = entry.novelContents.mapNotNull { (chapterUrl, json) ->
+            val chapter = chapterByUrl[chapterUrl] ?: return@mapNotNull null
+            decodeChapterContent(json)?.let { chapter.id to it }
+        }.toMap()
+
+        entry.novelPositions.forEach { (chapterUrl, blockFraction) ->
+            val chapter = chapterByUrl[chapterUrl] ?: return@forEach
+            val blockCount = contentByChapterId[chapter.id]?.blocks?.size ?: 0
+            readingProgressRepository.save(
+                chapter.id,
+                ReadingProgress(
+                    blockIndex = chapter.lastPageRead,
+                    // A logical position has no pixels; only the Compose layer ever knows a block's height.
+                    blockOffsetPx = 0,
+                    blockFraction = blockFraction,
+                    percent = percentOf(blockIndex = chapter.lastPageRead, blockFraction, blockCount),
+                ),
+            )
+        }
+
+        contentByChapterId.forEach { (chapterId, content) ->
+            chapterContentRepository.save(chapterId, content)
+        }
+    }
+
+    private fun decodeChapterContent(json: String): ChapterContent? = try {
+        Json.decodeFromString(ChapterContent.serializer(), json)
+    } catch (e: Exception) {
+        logcat(LogPriority.WARN, e) { "Skipping a novel chapter whose backup content will not decode" }
+        null
+    }
+
+    /**
+     * How far through its chapter a position is, from 0 to 1, the way the reader itself works it out.
+     *
+     * The block count is only known when the chapter's text came with the backup, so a restored position with no
+     * text records 0 and the chapter list shows nothing until the chapter is opened. That is deliberate: guessing a
+     * percentage from a block index alone could never reach 100%, and the position — which is what the reader
+     * opens at — is exact either way.
+     */
+    private fun percentOf(blockIndex: Int, blockFraction: Float, blockCount: Int): Float {
+        if (blockCount <= 0) return 0f
+        return ((blockIndex + blockFraction) / blockCount).coerceIn(0f, 1f)
+    }
 
     private suspend fun restoreHistory(manga: Manga, restoredHistory: List<RestoredHistory>) {
         if (restoredHistory.isEmpty()) return

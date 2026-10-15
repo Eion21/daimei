@@ -19,7 +19,9 @@ class BackupChapter(
     @ProtoNumber(3) var scanlator: String? = null,
     @ProtoNumber(4) var read: Boolean = false,
     @ProtoNumber(5) var bookmark: Boolean = false,
-    // lastPageRead is called progress in 1.x
+    // lastPageRead is called progress in 1.x. For a novel chapter it carries the block the reader stopped in
+    // rather than the page, because a novel chapter is read as text: see lastBlockFraction for why the index
+    // alone is not enough. An image chapter keeps meaning the page and is written the same way it always was.
     @ProtoNumber(6) var lastPageRead: Long = 0,
     @ProtoNumber(7) var dateFetch: Long = 0,
     @ProtoNumber(8) var dateUpload: Long = 0,
@@ -29,6 +31,17 @@ class BackupChapter(
     // @ProtoNumber(11) var lastModifiedAt: Long, artifact of the abandoned sync attempt
     // @ProtoNumber(12) var version: Long, artifact of the abandoned sync attempt
     @ProtoNumber(13) var memo: ByteArray = JsonObjectEmptyBytes,
+    /**
+     * How far through [lastPageRead] the reader had scrolled, from 0 to 1.
+     *
+     * Written only for a novel chapter, because only a novel chapter has one: this is the value that makes the
+     * position survive a font-size change, since a pixel or block offset lands somewhere else on the page as
+     * soon as the text reflows.
+     *
+     * 0F is the default and ProtoBuf leaves a default off the wire, so an image chapter's bytes are exactly
+     * what they were before this field existed, and a backup written before it restores as a fraction of 0.
+     */
+    @ProtoNumber(14) var lastBlockFraction: Float = 0F,
 ) {
     fun toChapterImpl(): Chapter {
         return Chapter.create().copy(

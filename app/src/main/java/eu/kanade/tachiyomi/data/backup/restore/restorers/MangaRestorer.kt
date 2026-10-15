@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.backup.restore.restorers
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import tachiyomi.domain.backup.model.RestoredHistory
@@ -41,9 +42,16 @@ class MangaRestorer(
         val backupCategoriesByOrder = backupCategories.associateBy { it.order }
 
         val entries = backupMangas.map { backupManga ->
+            val chapters = backupManga.chapters.map { it.toChapterImpl() }
+            // The one rule the reader routes by decides what is novel data here too: a chapter without the memo
+            // `NovelMapper` writes has neither a position inside its text nor text of its own to restore.
+            val novelChapterUrls = chapters
+                .filter { ChapterOpener.shouldOpenNovelReader(it) }
+                .mapTo(mutableSetOf()) { it.url }
+
             RestoredManga(
                 manga = backupManga.getMangaImpl(),
-                chapters = backupManga.chapters.map { it.toChapterImpl() },
+                chapters = chapters,
                 categoryIds = backupManga.categories.mapNotNull { backupCategoryOrder ->
                     backupCategoriesByOrder[backupCategoryOrder]?.let { backupCategory ->
                         dbCategoriesByName[backupCategory.name]?.id
@@ -55,6 +63,22 @@ class MangaRestorer(
                 },
                 tracks = backupManga.tracking.map { it.getTrackImpl() },
                 excludedScanlators = backupManga.excludedScanlators,
+                novelPositions = backupManga.chapters
+                    .zip(chapters)
+                    .filter { (_, chapter) -> chapter.url in novelChapterUrls }
+                    .mapNotNull { (backupChapter, chapter) ->
+                        // A fraction of 0 on block 0 is the top of the chapter, which is also what every novel
+                        // chapter in a backup taken before this existed carries. Neither is a position worth
+                        // writing a row for.
+                        val isTopOfChapter = backupChapter.lastBlockFraction <= 0F &&
+                            backupChapter.lastPageRead <= 0L
+                        if (isTopOfChapter) return@mapNotNull null
+                        chapter.url to backupChapter.lastBlockFraction
+                    }
+                    .toMap(),
+                novelContents = backupManga.novelContents
+                    .filter { it.chapterUrl in novelChapterUrls }
+                    .associate { it.chapterUrl to it.content },
             )
         }
 

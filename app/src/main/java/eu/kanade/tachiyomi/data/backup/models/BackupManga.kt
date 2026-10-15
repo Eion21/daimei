@@ -49,6 +49,18 @@ class BackupManga(
     @ProtoNumber(111) var initialized: Boolean = false,
     @ProtoNumber(112) var memo: ByteArray = JsonObjectEmptyBytes,
     @ProtoNumber(113) var nextUpdate: Long = 0,
+    /**
+     * The text of this manga's downloaded novel chapters, as JSON.
+     *
+     * Hangs off the entry rather than off [Backup] because it belongs to one library item exactly as
+     * `chapters`, `history` and `tracking` do: it is written and restored inside that entry's own unit of work,
+     * so a manga restores with its text or does not restore at all. A top-level field would need its own copy of
+     * the manga/chapter keying and a second pass over the file to put it back, for exactly the same bytes.
+     *
+     * Empty is the default and ProtoBuf leaves an empty list off the wire, so a manga with no cached novel
+     * chapter serializes to the same bytes as before this field existed.
+     */
+    @ProtoNumber(114) var novelContents: List<BackupNovelContent> = emptyList(),
 ) {
     fun getMangaImpl(): Manga {
         return Manga.create().copy(

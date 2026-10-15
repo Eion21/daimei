@@ -52,7 +52,6 @@ import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -102,14 +101,12 @@ import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.model.applyFilter
-import tachiyomi.domain.novel.interactor.GetChapterContent
 import tachiyomi.domain.novel.repository.ChapterContentRepository
 import tachiyomi.domain.novel.repository.ReadingProgressRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.isLocal
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
@@ -141,7 +138,6 @@ class MangaViewModel(
     private val getTracks: GetTracks,
     private val readingProgressRepository: ReadingProgressRepository,
     private val chapterContentRepository: ChapterContentRepository,
-    private val getChapterContent: GetChapterContent,
     private val addTracks: AddTracks,
     private val setMangaCategories: SetMangaCategories,
     private val filterChaptersForDownload: FilterChaptersForDownload,
@@ -198,23 +194,6 @@ class MangaViewModel(
 
     private val downloadStates = MutableStateFlow(emptyMap<Long, Download.State>())
 
-    /**
-     * The novel chapters currently being cached, by id.
-     *
-     * A novel chapter is never queued, so the image queue cannot hold its in-flight state and the button would
-     * show nothing at all for the length of a network fetch. This is what makes the tap visible from the first
-     * frame, and what gives CANCEL something to cancel.
-     */
-    private val novelDownloading = MutableStateFlow(emptySet<Long>())
-
-    /**
-     * The coroutine caching each of those chapters, so CANCEL can abort it.
-     *
-     * A concurrent map because the completion handler below runs on whichever thread finished the fetch, not
-     * on the one that started it.
-     */
-    private val novelDownloadJobs = ConcurrentHashMap<Long, Job>()
-
     // Progress ticks often, so only the download indicators that read it recompose instead of every tick rebuilding
     // the chapter list
     private val downloadProgress = mutableStateMapOf<Long, Int>()
@@ -238,18 +217,19 @@ class MangaViewModel(
      * Everything the chapter list needs to know about novel chapters, in one value so it can be one input of
      * the chapter list's combine.
      *
-     * The first two are empty for a manga of image chapters, since only the novel reader writes a position and
-     * only a novel source caches content. They are read for every manga anyway: each is one indexed query, and
-     * a novel's source resolves to a stub before it is installed, so asking the source what it is would be a
-     * second way to get this wrong. The third is this screen's own work in flight, which has to be in the
-     * combine rather than read at map time or a tap would not repaint until the save landed.
+     * Both are empty for a manga of image chapters, since only the novel reader writes a position and only a novel
+     * source caches content. They are read for every manga anyway: each is one indexed query, and a novel's source
+     * resolves to a stub before it is installed, so asking the source what it is would be a second way to get this
+     * wrong.
+     *
+     * There is no third input for work in flight any more. A novel chapter is queued like any other one, so the
+     * queue holds its state and the row below has nothing extra to track.
      */
     private val novelChapters = combine(
         readingProgressRepository.getPercentByMangaId(mangaId).distinctUntilChanged(),
         chapterContentRepository.getCachedChapterIdsByMangaId(mangaId).distinctUntilChanged(),
-        novelDownloading,
-    ) { readProgress, cachedChapterIds, downloadingChapterIds ->
-        NovelChapterState(readProgress, cachedChapterIds, downloadingChapterIds)
+    ) { readProgress, cachedChapterIds ->
+        NovelChapterState(readProgress, cachedChapterIds)
     }
 
     private val mangaAndChapters = combine(
@@ -535,9 +515,9 @@ class MangaViewModel(
     /**
      * Returns true if the manga has any downloads.
      *
-     * The question is asked of both mechanisms a download can live in, because each knows nothing about the
-     * other: the queue only ever holds image pages and the content cache only ever holds novel text. A novel
-     * entry is therefore no longer told it has nothing downloaded while its chapters sit in the cache directory.
+     * One question asked of the download manager, which is now the only thing that holds a download of any kind: a
+     * novel chapter's text file is in the same index a manga's page folder is in, so there is no second mechanism
+     * left that could hold something this one cannot see.
      */
     private suspend fun hasDownloads(): Boolean {
         val manga = successState?.manga ?: return false
@@ -549,46 +529,29 @@ class MangaViewModel(
      *
      * Planned again here rather than reusing what the prompt was built from: the user is answering a snackbar
      * that may have been on screen for a while, and what is on disk now is what they agreed to delete.
+     *
+     * `deleteManga` is the one path that clears everything a manga ever downloaded: the folder goes, which takes
+     * a novel's text files with it, and it drops the cached content rows as well, so nothing is left behind that
+     * would still open with the server off.
      */
     private suspend fun deleteDownloads() {
         val state = successState ?: return
-        when (val plan = mangaDownloadPlan(state.manga)) {
+        when (mangaDownloadPlan(state.manga)) {
             MangaDownloadPlan.Nothing -> Unit
             MangaDownloadPlan.DeleteImagePages ->
                 appScope.launch { downloadManager.deleteManga(state.manga, state.source) }
-            is MangaDownloadPlan.DeleteNovelContent -> deleteNovelContent(plan.chapterIds.toList())
         }
     }
 
     /**
-     * What this manga's downloads are, read from both places a download can live.
+     * What this manga's downloads are, read from the one place a download can live.
      *
-     * The prompt above and the delete below both go through here, so the two cannot answer differently: what
-     * the user was offered to clear is what clearing it actually does.
+     * The prompt above and the delete below both go through here, so the two cannot answer differently: what the
+     * user was offered to clear is what clearing it actually does.
      */
     private suspend fun mangaDownloadPlan(manga: Manga): MangaDownloadPlan = planMangaDownloads(
         imageDownloadCount = downloadManager.getDownloadCount(manga),
-        cachedNovelChapterIds = readCachedNovelChapterIds(manga.id),
     )
-
-    /**
-     * The chapters of this manga whose text is on disk, read once for the plan above.
-     *
-     * The same per-manga read the chapter list is built from, taken as a snapshot rather than collected: this
-     * runs once, on the way to a snackbar, and a chapter cached a second later is simply a chapter the user did
-     * not agree to delete. A read that fails answers with nothing, which leaves the image behaviour exactly as
-     * it was instead of failing the removal the user just asked for.
-     */
-    private suspend fun readCachedNovelChapterIds(mangaId: Long): Set<Long> {
-        return try {
-            chapterContentRepository.getCachedChapterIdsByMangaId(mangaId).first()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "[novel] Reading the cached chapters of manga $mangaId failed" }
-            emptySet()
-        }
-    }
 
     /**
      * Get user categories.
@@ -688,7 +651,6 @@ class MangaViewModel(
                 downloadState = chapterDownloadState(
                     isNovel = isNovel,
                     isContentCached = isNovel && chapter.id in novel.cachedChapterIds,
-                    isNovelDownloading = isNovel && chapter.id in novel.downloadingChapterIds,
                     queuedDownloadState = queuedDownloads[chapter.id]?.status,
                     isImageDownloaded = isLocal || chapter.id in downloadedChapterIds,
                 ),
@@ -806,9 +768,6 @@ class MangaViewModel(
     ) {
         when (val plan = planChapterDownloadAction(items, action)) {
             ChapterDownloadPlan.Nothing -> Unit
-            is ChapterDownloadPlan.CacheNovelContent -> plan.chapterIds.forEach(::startNovelDownload)
-            is ChapterDownloadPlan.CancelNovelContent -> plan.chapterIds.forEach(::cancelNovelDownload)
-            is ChapterDownloadPlan.DeleteNovelContent -> deleteNovelContent(plan.chapterIds)
             is ChapterDownloadPlan.QueueImagePages -> {
                 startDownload(plan.chapters, startNow = false)
                 if (plan.restartFailedDownloads) {
@@ -920,80 +879,20 @@ class MangaViewModel(
     /**
      * Downloads the given list of chapters with the manager.
      *
-     * Novel chapters are taken out first and cached as text: they have no page queue at all, so handing one to
-     * the image manager would ask `NovelSourceAdapter.getPageList` for pages it throws on by design. Every bulk
-     * entry point lands here — "download the next 5", "download unread", "download bookmarked", and the
-     * auto-download that follows a manual refresh — which is why the split lives here and not in each of them.
+     * Every chapter goes to the same queue, novel ones included: a novel chapter is prose, so `Downloader` writes it
+     * as one text file instead of asking a source for pages, but it is queued, reported, cancelled, indexed and
+     * deleted by exactly the same code. Splitting them here is what made this screen's behaviour differ from the
+     * library's, the updates tab's and auto-download's, all of which always went through the manager.
+     *
+     * Every bulk entry point lands here — "download the next 5", "download unread", "download bookmarked", and the
+     * auto-download that follows a manual refresh.
      *
      * @param chapters the list of chapters to download.
      */
     private suspend fun downloadChapters(chapters: List<Chapter>) {
         val manga = successState?.manga ?: return
-        val (novelChapters, imageChapters) = chapters.splitByDownloadMechanism()
-        novelChapters.forEach { chapter -> startNovelDownload(chapter.id) }
-        if (imageChapters.isNotEmpty()) {
-            downloadManager.downloadChapters(manga, imageChapters)
-        }
-    }
-
-    /**
-     * Caches the text of a novel chapter, which is what downloading one means.
-     *
-     * [GetChapterContent] reads disk before the source, so this is free for a chapter that is already cached and
-     * a fetch plus a save for one that is not: "download" and "open" are the same call, which is why there is no
-     * worker and no queue here. It runs in [appScope] like the image queue, so closing the screen does not throw
-     * away a fetch that is already running.
-     */
-    private fun startNovelDownload(chapterId: Long) {
-        if (chapterId in novelDownloading.value) return
-        // Added before the coroutine is created so the tap shows work in progress even when the content turns out
-        // to be in the cache and the fetch returns without suspending.
-        novelDownloading.update { it + chapterId }
-        val job = appScope.launch {
-            try {
-                getChapterContent.await(chapterId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "[novel] Caching chapter $chapterId failed" }
-            } finally {
-                novelDownloading.update { it - chapterId }
-            }
-        }
-        // Registered after the map write: a fetch that finished before this line would otherwise have its
-        // removal run first and leave a completed job behind for CANCEL to find.
-        novelDownloadJobs[chapterId] = job
-        job.invokeOnCompletion { novelDownloadJobs.remove(chapterId) }
-    }
-
-    /**
-     * Aborts the fetch caching a novel chapter.
-     *
-     * There is no image queue here, so this is the only honest meaning CANCEL has for one of these chapters:
-     * cancelling the coroutine. The chapter is written only after the source answers, so a cancelled fetch
-     * normally leaves nothing behind. The one narrow window is between `save` writing the file and the upsert
-     * that follows it, which can leave a file with no row — and a read with no row misses anyway, while the next
-     * save rewrites the same path, so the orphan costs disk and heals itself.
-     */
-    private fun cancelNovelDownload(chapterId: Long) {
-        novelDownloadJobs.remove(chapterId)?.cancel()
-    }
-
-    /**
-     * Drops the cached text of these novel chapters, which is what deleting a download means for them.
-     *
-     * The repository takes the row and the file together, so nothing here has to know where that file lives.
-     */
-    private fun deleteNovelContent(chapterIds: List<Long>) {
-        appScope.launch {
-            chapterIds.forEach { chapterId ->
-                try {
-                    chapterContentRepository.delete(chapterId)
-                } catch (e: Exception) {
-                    logcat(LogPriority.ERROR, e) { "[novel] Deleting cached content for chapter $chapterId failed" }
-                }
-            }
-        }
+        if (chapters.isEmpty()) return
+        downloadManager.downloadChapters(manga, chapters)
     }
 
     /**
@@ -1255,7 +1154,6 @@ class MangaViewModel(
     private data class NovelChapterState(
         val readProgress: Map<Long, Float>,
         val cachedChapterIds: Set<Long>,
-        val downloadingChapterIds: Set<Long>,
     )
 
     sealed interface State {
@@ -1410,44 +1308,37 @@ internal fun novelChapterProgressPercent(read: Boolean, percent: Float?): Int? {
 /**
  * The download state a chapter row shows.
  *
- * The two chapter kinds are downloaded by different mechanisms and are therefore asked separately: a novel
- * chapter's "download" is a `chapter_content` row on disk, and an image chapter's is a page in the download
- * queue, which knows nothing about novels. The novel arguments are read only when the chapter is one, so an
- * image row answers exactly what it answered before this existed. Letting the drift run the other way — a
- * cached novel chapter changing what an image chapter shows — is the failure this split exists to prevent, and
- * it is what the two guard tests below pin.
+ * Every chapter is downloaded by the same queue now, so the queue's own state is the first answer for both kinds
+ * and there is no second mechanism whose state has to be consulted instead. What is left is the queue's transient
+ * state, then the two things that mean "the content opens with no network": a chapter in the download index, which
+ * a novel's text file is in as much as a manga's page folder is, and a novel chapter's cached text, which is what
+ * the reader writes when a chapter is opened and never had to be downloaded at all.
  *
- * [isContentCached] outranks [isNovelDownloading] on purpose: a chapter already on disk stays `DOWNLOADED` even
- * while a re-fetch runs, because what the row means is that its content opens with no network.
+ * The novel arguments are read only when the chapter is one, so an image row answers exactly what it answered
+ * before novels existed. Letting the drift run the other way — a cached novel chapter changing what an image
+ * chapter shows — is what the guard test below pins.
  */
 internal fun chapterDownloadState(
     isNovel: Boolean,
     isContentCached: Boolean,
-    isNovelDownloading: Boolean,
     queuedDownloadState: Download.State?,
     isImageDownloaded: Boolean,
-): Download.State {
-    if (isNovel) {
-        return when {
-            isContentCached -> Download.State.DOWNLOADED
-            isNovelDownloading -> Download.State.DOWNLOADING
-            else -> Download.State.NOT_DOWNLOADED
-        }
-    }
-    return when {
-        queuedDownloadState != null -> queuedDownloadState
-        isImageDownloaded -> Download.State.DOWNLOADED
-        else -> Download.State.NOT_DOWNLOADED
-    }
+): Download.State = when {
+    queuedDownloadState != null -> queuedDownloadState
+    // Gated on the chapter being a novel one here rather than only at the call site, so that is where the rule
+    // lives: the cached-content set belongs to a novel source alone, and letting it answer for an image chapter
+    // would show a download nobody made on every manga in the app.
+    isNovel && isContentCached -> Download.State.DOWNLOADED
+    isImageDownloaded -> Download.State.DOWNLOADED
+    else -> Download.State.NOT_DOWNLOADED
 }
 
 /**
  * The image queue's own state, narrowed to the chapters the queue still holds.
  *
  * Two things depend on that narrowing. A finished chapter leaves the queue and its last status change can be
- * lost with it, so it is left to the queried item. And a novel chapter is never in the queue, so its entry can
- * never survive this filter: that is what stops a transient image state from overwriting a novel chapter's
- * cached-content state a few lines away in the state combine.
+ * lost with it, so it is left to the queried item. And a chapter that was queued and has since left it has no
+ * state left to report, which is a null this drops rather than a `NOT_DOWNLOADED` the row would inherit.
  */
 internal fun queuedDownloadStatesFor(
     states: Map<Long, Download.State>,
@@ -1458,10 +1349,10 @@ internal fun queuedDownloadStatesFor(
 }
 
 /**
- * Applies the image queue's transient state and the selection to one chapter row.
+ * Applies the download queue's transient state and the selection to one chapter row.
  *
- * [queuedDownloadState] is null for every chapter the queue does not hold, including all novel ones, so a null
- * here means "the queue has nothing to say" and never "not downloaded".
+ * [queuedDownloadState] is null for every chapter the queue does not hold, which means "the queue has nothing to
+ * say" and never "not downloaded".
  */
 internal fun withQueuedDownloadState(
     item: ChapterList.Item,
@@ -1473,52 +1364,26 @@ internal fun withQueuedDownloadState(
 }
 
 /**
- * Chapters split by what downloads them: novel chapters first, then image chapters.
- *
- * A novel chapter's text goes to disk and it has no page queue at all, so one reaching [DownloadManager] would
- * ask `NovelSourceAdapter.getPageList` for pages that throw by design. The split is asked of
- * [ChapterOpener.shouldOpenNovelReader], the same rule that routes the chapter to the novel reader, so the
- * button and the reader cannot end up disagreeing about what kind of chapter this is.
- */
-internal fun List<Chapter>.splitByDownloadMechanism(): Pair<List<Chapter>, List<Chapter>> =
-    partition(ChapterOpener::shouldOpenNovelReader)
-
-/**
  * What deleting a manga's downloads has to clear.
  *
- * A manga's downloads are pages in the image queue, novel text in the content cache, or both empty, and the two
- * mechanisms are kept apart everywhere else on this screen: a novel chapter never reaches the queue, and an
- * image chapter never writes to the cache. Resolving both into one plan here is what stops that split from
- * becoming a leak — asking only the queue left a novel entry with cached text it could never be offered the
- * chance to delete.
- *
- * The two are never applied together: a manga's chapters all come from one source, so only one of the two can
- * hold anything for it. Were that ever not true, the novel half wins, which is the same tie-break
- * [planChapterDownloadAction] uses for a mixed chapter selection and goes to the copy that nothing else holds.
+ * One case, because there is one mechanism: the download folder for this manga, whatever shape the files in it
+ * have. A novel's chapters are indexed in the same place a manga's are and are removed by the same call.
  */
 internal sealed interface MangaDownloadPlan {
     /** Nothing is downloaded, so there is nothing to offer and nothing to delete. */
     data object Nothing : MangaDownloadPlan
 
-    /** Delete the image queue's downloads for the manga, exactly as it was done before novels existed. */
+    /** Delete every download for the manga, exactly as it was done before novels existed. */
     data object DeleteImagePages : MangaDownloadPlan
-
-    /** Drop the cached text of these chapters, which for a novel is all a download ever was. */
-    data class DeleteNovelContent(val chapterIds: Set<Long>) : MangaDownloadPlan
 }
 
 /**
- * Resolves what a manga's downloads are, from the two places that can hold them.
+ * Resolves what a manga's downloads are.
  *
- * [imageDownloadCount] is the image queue's own count and [cachedNovelChapterIds] the chapters whose text is on
- * disk, both read by the caller. Neither implies the other, and a manga that has neither is [MangaDownloadPlan.Nothing]:
- * that is the only answer that means there is nothing to prompt about.
+ * [imageDownloadCount] is the download manager's own count for this manga, read by the caller. Zero is
+ * [MangaDownloadPlan.Nothing], which is the only answer that means there is nothing to prompt about.
  */
-internal fun planMangaDownloads(
-    imageDownloadCount: Int,
-    cachedNovelChapterIds: Set<Long>,
-): MangaDownloadPlan = when {
-    cachedNovelChapterIds.isNotEmpty() -> MangaDownloadPlan.DeleteNovelContent(cachedNovelChapterIds)
+internal fun planMangaDownloads(imageDownloadCount: Int): MangaDownloadPlan = when {
     imageDownloadCount > 0 -> MangaDownloadPlan.DeleteImagePages
     else -> MangaDownloadPlan.Nothing
 }
@@ -1526,79 +1391,62 @@ internal fun planMangaDownloads(
 /**
  * What a chapter download action actually has to do.
  *
- * Every action the download button and the swipe action can raise resolves to exactly one of these before
- * anything is started, which is what keeps a novel chapter from reaching the image queue: the plan that carries
- * chapter ids is a novel one, and the plans that carry chapters are image ones, so the two cannot be mixed up
- * by a call site that forgets to check.
- *
- * A manga's chapters all come from one source, so a selection holding both kinds cannot happen; if one ever
- * did, the novel half is the one that gets actioned.
+ * Every action the download button and the swipe action can raise resolves to exactly one of these before anything
+ * is started, and every one of them is an action on the download queue. A novel chapter resolves to the same plans
+ * as an image one: the plan carries the chapters, and the downloader is what knows a chapter of prose is written
+ * as one text file rather than as pages.
  */
 internal sealed interface ChapterDownloadPlan {
     /** Nothing to do: an empty selection, or an action that means nothing for this many chapters. */
     data object Nothing : ChapterDownloadPlan
 
-    /** Cache the text of these novel chapters. Covers both START and START_NOW: there is no queue to jump. */
-    data class CacheNovelContent(val chapterIds: List<Long>) : ChapterDownloadPlan
-
-    /** Abort the fetch caching these novel chapters. */
-    data class CancelNovelContent(val chapterIds: List<Long>) : ChapterDownloadPlan
-
-    /** Drop the cached text of these novel chapters. */
-    data class DeleteNovelContent(val chapterIds: List<Long>) : ChapterDownloadPlan
-
-    /** Queue these image chapters. [restartFailedDownloads] is the image path's own retry of ERROR rows. */
+    /** Queue these chapters. [restartFailedDownloads] is the retry of ERROR rows. */
     data class QueueImagePages(
         val chapters: List<Chapter>,
         val restartFailedDownloads: Boolean,
     ) : ChapterDownloadPlan
 
-    /** Put one image chapter at the front of the queue and start now. */
+    /** Put one chapter at the front of the queue and start now. */
     data class StartImagePagesNow(val chapters: List<Chapter>) : ChapterDownloadPlan
 
-    /** Take one image chapter back out of the queue. */
+    /** Take one chapter back out of the queue. */
     data class CancelImageDownload(val chapterId: Long) : ChapterDownloadPlan
 
-    /** Delete the downloads of these image chapters. */
+    /** Delete the downloads of these chapters. */
     data class DeleteImagePages(val chapters: List<Chapter>) : ChapterDownloadPlan
 }
 
 /**
  * Resolves a download action into the single thing it means for these chapters.
  *
- * The guards the image path already had are kept as they were: START_NOW and CANCEL act on one chapter only,
- * and a selection of the wrong size resolves to [ChapterDownloadPlan.Nothing] rather than quietly taking the
- * first row. Which guard applies is decided after the split, so a novel chapter is never measured against a
- * rule written for an image one.
+ * The guards the image path already had are kept as they were: START_NOW and CANCEL act on one chapter only, and
+ * a selection of the wrong size resolves to [ChapterDownloadPlan.Nothing] rather than quietly taking the first
+ * row. There is nothing to measure a novel chapter against a rule written for an image one any more, because there
+ * is one set of rules and it is the queue's.
  */
 internal fun planChapterDownloadAction(
     items: List<ChapterList.Item>,
     action: ChapterDownloadAction,
 ): ChapterDownloadPlan {
-    val (novelChapters, imageChapters) = items.map { it.chapter }.splitByDownloadMechanism()
-    val novelChapterIds = novelChapters.map(Chapter::id)
+    val chapters = items.map { it.chapter }
     return when (action) {
         ChapterDownloadAction.START -> when {
-            novelChapters.isNotEmpty() -> ChapterDownloadPlan.CacheNovelContent(novelChapterIds)
-            imageChapters.isNotEmpty() -> ChapterDownloadPlan.QueueImagePages(
-                chapters = imageChapters,
+            chapters.isNotEmpty() -> ChapterDownloadPlan.QueueImagePages(
+                chapters = chapters,
                 restartFailedDownloads = items.any { it.downloadState == Download.State.ERROR },
             )
             else -> ChapterDownloadPlan.Nothing
         }
         ChapterDownloadAction.START_NOW -> when {
-            novelChapters.isNotEmpty() -> ChapterDownloadPlan.CacheNovelContent(novelChapterIds)
-            imageChapters.size == 1 -> ChapterDownloadPlan.StartImagePagesNow(imageChapters)
+            chapters.size == 1 -> ChapterDownloadPlan.StartImagePagesNow(chapters)
             else -> ChapterDownloadPlan.Nothing
         }
         ChapterDownloadAction.CANCEL -> when {
-            novelChapters.isNotEmpty() -> ChapterDownloadPlan.CancelNovelContent(novelChapterIds)
-            imageChapters.size == 1 -> ChapterDownloadPlan.CancelImageDownload(imageChapters.single().id)
+            chapters.size == 1 -> ChapterDownloadPlan.CancelImageDownload(chapters.single().id)
             else -> ChapterDownloadPlan.Nothing
         }
         ChapterDownloadAction.DELETE -> when {
-            novelChapters.isNotEmpty() -> ChapterDownloadPlan.DeleteNovelContent(novelChapterIds)
-            imageChapters.isNotEmpty() -> ChapterDownloadPlan.DeleteImagePages(imageChapters)
+            chapters.isNotEmpty() -> ChapterDownloadPlan.DeleteImagePages(chapters)
             else -> ChapterDownloadPlan.Nothing
         }
     }

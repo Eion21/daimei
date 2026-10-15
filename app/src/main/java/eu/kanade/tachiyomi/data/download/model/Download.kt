@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.data.download.model
 
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -13,8 +13,17 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import kotlin.time.Duration.Companion.milliseconds
 
+/**
+ * A chapter waiting to be, or being, downloaded.
+ *
+ * [source] is a [Source] rather than an `HttpSource` on purpose. A novel chapter is downloaded too, and its source
+ * is a plain [Source] that has no page pipeline at all — so typing this to `HttpSource` did not restrict the queue
+ * to image chapters, it made novel chapters unreachable with no error and no log: the queue simply never accepted
+ * them. Typing it to the transport the source actually is leaves the page pipeline where it belongs, at the few
+ * places that use it, and lets every source reach the one queue.
+ */
 data class Download(
-    val source: HttpSource,
+    val source: Source,
     val manga: Manga,
     val chapter: Chapter,
 ) {

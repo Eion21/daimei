@@ -7,12 +7,14 @@ import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -30,6 +32,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.novel.repository.ChapterContentRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 
@@ -51,6 +54,7 @@ class DownloadManager(
     private val downloadPreferences: DownloadPreferences,
     private val downloader: Downloader,
     private val pendingDeleter: DownloadPendingDeleter,
+    private val chapterContentRepository: ChapterContentRepository,
 ) {
 
     val queueState
@@ -113,7 +117,9 @@ class DownloadManager(
     private suspend fun downloadFromChapterId(chapterId: Long): Download? {
         val chapter = getChapter.await(chapterId) ?: return null
         val manga = getManga.await(chapter.mangaId) ?: return null
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+        // Same rule as the bulk path: any installed source, because "download now" on a novel chapter is the same
+        // action as on any other. Casting to `HttpSource` here returned null and made the tap do nothing at all.
+        val source = sourceManager.get(manga.source) ?: return null
 
         return Download(source, manga, chapter)
     }
@@ -275,13 +281,46 @@ class DownloadManager(
 
             downloader.dequeue(filteredChapters)
 
+            logcat(LogPriority.INFO) {
+                "[novel] Delete: removing the download of ${filteredChapters.size} chapter(s) of manga ${manga.id}"
+            }
             val (mangaDir, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
             chapterDirs.forEach { it.delete() }
             cache.removeChapters(filteredChapters, manga)
+            // The row is the other half of a novel's download: it is what opens the chapter with no network, so a
+            // delete that took only the file would leave the chapter readable with the server off — "deleted" and
+            // still open. Cleared here rather than by the screen, so every delete agrees with what it promised.
+            dropNovelContent(filteredChapters.filter(ChapterOpener::shouldOpenNovelReader).map(Chapter::id))
 
             // Delete manga directory if empty
             if (mangaDir?.listFiles()?.isEmpty() == true) {
                 deleteManga(manga, source, removeQueued = false)
+            }
+        }
+    }
+
+    /**
+     * Drops the cached text of these chapters, so a deleted download stops being readable with no network.
+     *
+     * Ids rather than chapters because the two callers know them by different things: a selection knows which of its
+     * chapters are novel ones, and a whole-manga delete is handed a set of ids by the repository itself and has no
+     * chapter row to ask. A row rebuilt from an id alone carries no memo, so filtering it by "is this a novel
+     * chapter" would quietly clear nothing.
+     *
+     * A failure to clear one is logged and the rest still go: the files are already gone by this point, so refusing
+     * to finish would leave more behind than carrying on.
+     */
+    private suspend fun dropNovelContent(chapterIds: List<Long>) {
+        chapterIds.forEach { chapterId ->
+            try {
+                chapterContentRepository.delete(chapterId)
+                logcat(LogPriority.DEBUG) { "[novel] Dropped the cached content of chapter $chapterId" }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) {
+                    "[novel] Dropping the cached content of chapter $chapterId failed; it stays readable offline"
+                }
             }
         }
     }
@@ -300,6 +339,10 @@ class DownloadManager(
             }
             provider.findMangaDir(manga.title, source)?.delete()
             cache.removeManga(manga)
+            // The whole folder is gone, so every chapter under it lost its download. The rows live outside that
+            // folder, in the content cache, and nothing else ever clears them: leaving them behind is how a novel
+            // the user deleted from disk keeps opening with the server off, forever.
+            dropNovelContent(cachedNovelChapterIds(manga))
 
             // Delete source directory if empty
             val sourceDir = provider.findSourceDir(source)
@@ -308,6 +351,24 @@ class DownloadManager(
                 cache.removeSource(source)
             }
         }
+    }
+
+    /**
+     * The chapters of this manga whose text is on disk, asked of the repository the chapter list reads.
+     *
+     * A read that fails answers with nothing, which leaves a manga whose folder was just deleted with its rows in
+     * place. That is the lesser of the two wrongs: the folder is gone either way, and a row with no file behind it
+     * is a chapter that reads as empty rather than one that lies about being downloaded.
+     */
+    private suspend fun cachedNovelChapterIds(manga: Manga): List<Long> = try {
+        chapterContentRepository.getCachedChapterIdsByMangaId(manga.id).first().toList()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) {
+            "[novel] Reading the cached chapters of manga ${manga.id} failed; their content rows were left in place"
+        }
+        emptyList()
     }
 
     /**
@@ -399,7 +460,12 @@ class DownloadManager(
      */
     suspend fun renameChapter(source: Source, manga: Manga, oldChapter: Chapter, newChapter: Chapter) =
         withContext(Dispatchers.IO) {
-            val oldNames = provider.getValidChapterDirNames(oldChapter.name, oldChapter.scanlator, oldChapter.url)
+            val oldNames = provider.getValidChapterDirNames(
+                oldChapter.name,
+                oldChapter.scanlator,
+                oldChapter.url,
+                ChapterOpener.shouldOpenNovelReader(oldChapter),
+            )
             val mangaDir = provider.getMangaDir(manga.title, source).getOrElse { e ->
                 logcat(LogPriority.ERROR, e) {
                     "Manga download folder doesn't exist. Skipping renaming after source sync"
@@ -413,8 +479,13 @@ class DownloadManager(
                 .firstOrNull() ?: return@withContext
 
             var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.url)
+            // The extension is part of what was found, so the renamed entry has to keep it: a novel's `.txt`
+            // renamed to the bare name would stop being a name `findChapterDir` asks for, and the chapter would
+            // become undeletable and invisible the moment a sync changed its title
             if (oldDownload.isFile && oldDownload.extension == "cbz") {
                 newName += ".cbz"
+            } else if (oldDownload.isFile && oldDownload.extension == Downloader.NOVEL_CHAPTER_EXTENSION) {
+                newName += ".${Downloader.NOVEL_CHAPTER_EXTENSION}"
             }
 
             if (oldDownload.name == newName) return@withContext

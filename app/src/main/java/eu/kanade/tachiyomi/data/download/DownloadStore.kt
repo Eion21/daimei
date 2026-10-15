@@ -6,7 +6,6 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.model.Download
-import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import tachiyomi.domain.chapter.interactor.GetChapter
@@ -104,7 +103,12 @@ class DownloadStore(
                 val manga = cachedManga.getOrPut(mangaId) {
                     getManga.await(mangaId)
                 } ?: continue
-                val source = sourceManager.get(manga.source) as? HttpSource ?: continue
+                // Any source the manager knows, not only an `HttpSource`. A novel download is a queued download
+                // like any other and it is written to this store like any other, so narrowing it here would drop
+                // every queued novel chapter on the next app start and the user would watch a half-finished
+                // download quietly disappear. A manga whose source is not installed is still skipped: there is
+                // genuinely nothing to download it with.
+                val source = sourceManager.get(manga.source) ?: continue
                 val chapter = getChapter.await(chapterId) ?: continue
                 downloads.add(Download(source, manga, chapter))
             }

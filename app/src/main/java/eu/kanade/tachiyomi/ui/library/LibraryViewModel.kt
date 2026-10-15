@@ -24,7 +24,6 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.coroutines.CoroutineScope
@@ -575,10 +574,10 @@ class LibraryViewModel(
 
             if (deleteChapters) {
                 mangas.forEach { manga ->
-                    val source = sourceManager.get(manga.source) as? HttpSource
-                    if (source != null) {
-                        downloadManager.deleteManga(manga, source)
-                    }
+                    // No cast to HttpSource here: a novel source is not one, so the cast silently returned null and
+                    // the delete was skipped, leaving the novel's download folder and content rows behind.
+                    val source = sourceManager.get(manga.source) ?: return@forEach
+                    downloadManager.deleteManga(manga, source)
                 }
             }
         }

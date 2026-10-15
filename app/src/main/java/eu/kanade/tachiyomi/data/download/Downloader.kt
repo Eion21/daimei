@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import app.novel.source.api.ChapterContent
+import app.novel.source.api.ContentBlock
 import com.hippo.unifile.UniFile
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -12,9 +14,11 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
@@ -61,6 +65,7 @@ import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.novel.interactor.GetChapterContent
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
@@ -89,6 +94,7 @@ class Downloader(
     private val getTracks: GetTracks,
     private val store: DownloadStore,
     private val notifier: DownloadNotifier,
+    private val getChapterContent: GetChapterContent,
 ) {
     /**
      * Queue where active downloads are kept.
@@ -246,7 +252,7 @@ class Downloader(
 
             // Use supervisorScope to cancel child jobs when the downloader job is cancelled
             supervisorScope {
-                val sourceJobs = mutableMapOf<HttpSource, Job>()
+                val sourceJobs = mutableMapOf<Source, Job>()
                 val downloadJobs = ConcurrentHashMap<Download, Job>()
 
                 // A source runs several of its chapters at once, so a removed one is stopped by itself
@@ -279,7 +285,7 @@ class Downloader(
      * pages finish and it's archived.
      */
     private fun CoroutineScope.launchSourceJob(
-        source: HttpSource,
+        source: Source,
         downloadJobs: MutableMap<Download, Job>,
         owner: Job,
     ) = launch(Dispatchers.IO) {
@@ -354,7 +360,18 @@ class Downloader(
     suspend fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean): Boolean {
         if (chapters.isEmpty()) return false
 
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return false
+        // Any source the manager knows, not only an `HttpSource`. A novel chapter is downloaded too and its
+        // source is a plain `Source`; casting here used to drop every one of them on the floor with no error, no
+        // notification and no log, which is the silent no-op this phase exists to remove. A manga whose source is
+        // not installed is still refused, because there is genuinely nothing to download it with — and that is
+        // logged now, because a silent skip is indistinguishable from a working one.
+        val source = sourceManager.get(manga.source)
+        if (source == null) {
+            logcat(LogPriority.WARN) {
+                "Source ${manga.source} of manga ${manga.id} is not installed; its chapters were not queued"
+            }
+            return false
+        }
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = withContext(Dispatchers.IO) {
             val downloadedChapterIds = provider.findDownloadedChapterIds(chapters, manga, source)
@@ -409,7 +426,11 @@ class Downloader(
      * @param slots the page download slots of the chapter's source.
      * @param pagesStarted completed once every page has a slot.
      */
-    private suspend fun downloadChapter(download: Download, slots: Semaphore, pagesStarted: CompletableDeferred<Unit>) {
+    internal suspend fun downloadChapter(
+        download: Download,
+        slots: Semaphore,
+        pagesStarted: CompletableDeferred<Unit>,
+    ) {
         val mangaDir = provider.getMangaDir(download.manga.title, download.source).getOrElse { e ->
             download.status = Download.State.ERROR
             notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
@@ -434,12 +455,44 @@ class Downloader(
             download.chapter.url,
         )
 
+        // A novel chapter is downloaded as one text file where a manga chapter is a folder of images or a CBZ, so
+        // the checks below have to know which of the two they are looking for
+        val isNovelChapter = ChapterOpener.shouldOpenNovelReader(download.chapter)
+
         // Being stopped after the download is moved into place but before it's indexed leaves a finished download
         // on disk that is still queued, and downloading it again would save a second copy next to it
-        if (mangaDir.findFile("$chapterDirname.cbz") != null || mangaDir.findFile(chapterDirname) != null) {
+        if (
+            mangaDir.findFile("$chapterDirname.cbz") != null ||
+            mangaDir.findFile(chapterDirname) != null ||
+            // Asked of a novel only: a stray text file standing where a manga's chapter should be is not a
+            // download, and letting it answer here would skip the download that never happened
+            (isNovelChapter && mangaDir.findFile("$chapterDirname.$NOVEL_CHAPTER_EXTENSION") != null)
+        ) {
             mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
             cache.addChapter(chapterDirname, mangaDir, download.manga)
             download.status = Download.State.DOWNLOADED
+            return
+        }
+
+        // Before the page list is asked for rather than after it throws: a novel chapter has no pages at all, and
+        // `getPageList` refuses to pretend otherwise, so everything below this point is unreachable for one
+        if (isNovelChapter) {
+            downloadNovelChapter(download, mangaDir, chapterDirname)
+            return
+        }
+
+        // The rest of this method is the image pipeline: a page list, image URLs, image bytes, a CBZ. All of that
+        // lives on `HttpSource`, and only there. Resolving it here rather than letting it fail three frames down
+        // means a source with no page pipeline is reported as a download that could not be made, instead of
+        // crashing the worker or — worse, the shape this bug had — being skipped without a word.
+        val httpSource = download.source as? HttpSource
+        if (httpSource == null) {
+            logcat(LogPriority.ERROR) {
+                "[download] ${download.source} has no page pipeline, so chapter ${download.chapter.id} cannot " +
+                    "be downloaded as pages"
+            }
+            download.status = Download.State.ERROR
+            notifier.onError(null, download.chapter.name, download.manga.title, download.manga.id)
             return
         }
 
@@ -472,7 +525,7 @@ class Downloader(
                         if (page.imageUrl.isNullOrEmpty()) {
                             page.status = Page.State.LoadPage
                             try {
-                                page.imageUrl = download.source.getImageUrl(page)
+                                page.imageUrl = httpSource.getImageUrl(page)
                             } catch (e: Throwable) {
                                 page.status = Page.State.Error(e)
                             }
@@ -496,7 +549,7 @@ class Downloader(
                 tmpDir,
                 download.manga,
                 download.chapter,
-                download.source,
+                httpSource,
             )
 
             // Only rename the directory if it's downloaded
@@ -520,6 +573,71 @@ class Downloader(
     }
 
     /**
+     * Downloads a novel chapter, which is prose and not pages.
+     *
+     * None of the image pipeline below can be reused: `getPageList` throws for a novel source by design, and the
+     * page slots, the CBZ and the image files all assume pages exist to be filled. So the whole chapter is one
+     * file, written under the temp name and renamed — which is what keeps a download killed mid-write from
+     * leaving behind a `.txt` that the index would read as a finished chapter.
+     *
+     * [getChapterContent] reads its cache before the source, so downloading a chapter that was already read costs
+     * nothing and never reaches the network, and it stores whatever it resolves: the file written here is the
+     * copy the user finds in the download folder, while the copy that makes the chapter readable with no network
+     * is the one the reader produced.
+     *
+     * Content that resolves to nothing is an error and not an empty file. The index reads a `.txt` as a finished
+     * chapter, so an empty one would be reported as downloaded from then on and the failure behind it would
+     * never surface.
+     */
+    private suspend fun downloadNovelChapter(download: Download, mangaDir: UniFile, chapterDirname: String) {
+        download.status = Download.State.DOWNLOADING
+
+        val novelFileName = "$chapterDirname.$NOVEL_CHAPTER_EXTENSION"
+        // One line per step of the path, each naming the step, because "the download did nothing" on a device is
+        // otherwise a guess between not entering this method, failing to resolve the text, failing to write the
+        // file and failing to index it.
+        logcat(LogPriority.INFO) {
+            "[novel] Download: chapter ${download.chapter.id} resolving its text for $novelFileName"
+        }
+        try {
+            val text = getChapterContent.await(download.chapter.id)?.toPlainText()
+            if (text.isNullOrBlank()) {
+                logcat(LogPriority.ERROR) {
+                    "[novel] Download: chapter ${download.chapter.id} has no content, so $novelFileName was not written"
+                }
+                download.status = Download.State.ERROR
+                // With no message of its own to give: the notifier's own wording for a chapter it could not
+                // download is the honest one, and a message about pages would be about a pipeline never reached
+                notifier.onError(null, download.chapter.name, download.manga.title, download.manga.id)
+                return
+            }
+
+            // A temp file left by an interrupted attempt would make createFile fail, and this is where it heals
+            mangaDir.findFile(novelFileName + TMP_DIR_SUFFIX)?.delete()
+            val tmpFile = mangaDir.createFile(novelFileName + TMP_DIR_SUFFIX)!!
+            tmpFile.openOutputStream().use { it.write(text.toByteArray(Charsets.UTF_8)) }
+            tmpFile.renameTo(novelFileName)
+            logcat(LogPriority.INFO) {
+                "[novel] Download: wrote $novelFileName (${text.length} chars) for chapter ${download.chapter.id}"
+            }
+
+            cache.addChapter(chapterDirname, mangaDir, download.manga)
+            logcat(LogPriority.INFO) {
+                "[novel] Download: chapter ${download.chapter.id} indexed as $chapterDirname"
+            }
+
+            download.status = Download.State.DOWNLOADED
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.ERROR, error) {
+                "[novel] Download: chapter ${download.chapter.id} failed while writing $novelFileName"
+            }
+            download.status = Download.State.ERROR
+            notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+        }
+    }
+
+    /**
      * Gets the image from the filesystem if it exists or downloads it otherwise.
      *
      * @param page the page to download.
@@ -529,6 +647,15 @@ class Downloader(
     private suspend fun getOrDownloadImage(page: Page, download: Download, tmpDir: UniFile) {
         // If the image URL is empty, do nothing
         if (page.imageUrl == null) {
+            return
+        }
+
+        // Reached only from the image pipeline, which has already resolved and rejected on a missing `HttpSource`.
+        // The cast is still written out rather than passed in, so this function cannot be called for a source that
+        // has no image API without saying so at the point it goes wrong.
+        val httpSource = download.source as? HttpSource ?: run {
+            logcat(LogPriority.ERROR) { "[download] ${download.source} cannot fetch image ${page.number}" }
+            page.status = Page.State.Error(IllegalStateException("source has no image API"))
             return
         }
 
@@ -547,7 +674,7 @@ class Downloader(
                 chapterCache.isImageInCache(
                     page.imageUrl!!,
                 ) -> copyImageFromCache(chapterCache.getImageFile(page.imageUrl!!), tmpDir, filename)
-                else -> downloadImage(page, download.source, tmpDir, filename)
+                else -> downloadImage(page, httpSource, tmpDir, filename)
             }
 
             // When the page is ready, set page path, progress (just in case) and status
@@ -864,6 +991,15 @@ class Downloader(
 
     companion object {
         const val TMP_DIR_SUFFIX = "_tmp"
+
+        /**
+         * The extension a novel chapter is downloaded with, without the dot.
+         *
+         * A novel chapter is one file of prose where a manga chapter is a folder of images or a CBZ, and the index
+         * and the delete both have to tell them apart by this name.
+         */
+        const val NOVEL_CHAPTER_EXTENSION = "txt"
+
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
@@ -872,3 +1008,23 @@ class Downloader(
 
 // Arbitrary minimum required space to start a download: 200 MB
 private const val MIN_DISK_SPACE = 200L * 1024 * 1024
+
+// Deepest heading a text file spells out; past this the hashes stop carrying meaning and only add noise
+private const val MAX_PLAIN_TEXT_HEADING_LEVEL = 6
+
+/**
+ * The chapter as the plain text that gets written to the download folder.
+ *
+ * `ChapterContent` is a block list shaped for the reader, so flattening it is a rendering decision and nothing
+ * here can be dropped quietly: an image keeps its address in markdown syntax instead of disappearing, because a
+ * `.txt` cannot carry the image and a missing block is indistinguishable from a short chapter.
+ */
+private fun ChapterContent.toPlainText(): String = blocks.joinToString("\n\n") { block ->
+    when (block) {
+        is ContentBlock.Paragraph -> block.text
+        // The hashes are what most text readers read back as a heading, and cost nothing to a reader that does not
+        is ContentBlock.Heading -> "${"#".repeat(block.level.coerceIn(1, MAX_PLAIN_TEXT_HEADING_LEVEL))} ${block.text}"
+        is ContentBlock.Image -> "![${block.alt.orEmpty()}](${block.url})"
+        ContentBlock.Divider -> "---"
+    }
+}

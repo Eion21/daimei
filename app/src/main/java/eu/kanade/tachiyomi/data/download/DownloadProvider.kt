@@ -7,6 +7,8 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
 import eu.kanade.tachiyomi.util.lang.Hash.md5
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import kotlinx.coroutines.Dispatchers
@@ -189,17 +191,26 @@ class DownloadProvider(
     }
 
     private fun Chapter.findDir(find: (String) -> UniFile?): UniFile? {
-        return getValidChapterDirNames(name, scanlator, url).firstNotNullOfOrNull(find)
+        // The chapter is in hand here, so this is the one lookup that can tell a novel's text file apart from a
+        // manga's page folder instead of asking for both and hoping only one exists
+        return getValidChapterDirNames(name, scanlator, url, ChapterOpener.shouldOpenNovelReader(this))
+            .firstNotNullOfOrNull(find)
     }
 
     /**
      * Returns the download directory name for a source.
      *
+     * `HttpSource` overrides `toString()` with its name and language, which is what every manga download folder in
+     * the wild is named after. A `Source` that does not override it is named after its own identity instead, and
+     * an identity hash changes on every launch: a novel's folder would be written somewhere nothing can find
+     * again, so the download would never be indexed a second time nor deleted. So the fallback spells out the same
+     * string `HttpSource` would have produced, and the two formats stay identical.
+     *
      * @param source the source to query.
      */
     fun getSourceDirName(source: Source): String {
         return DiskUtil.buildValidFilename(
-            source.toString(),
+            if (source is HttpSource) source.toString() else "${source.name} (${source.lang.uppercase()})",
             disallowNonAscii = libraryPreferences.disallowNonAsciiFilenames.get(),
         )
     }
@@ -289,26 +300,46 @@ class DownloadProvider(
     /**
      * Returns valid downloaded chapter directory names.
      *
-     * @param chapter the domain chapter object.
+     * [isNovelChapter] is what keeps the novel text file out of a manga's answers. A name here is asked of a chapter
+     * by name alone — nothing in "Capítulo 1" says whether the entry is prose or pixels — so accepting `.txt` for
+     * every chapter would let a text file that happens to sit where a manga's chapter should be answer for a
+     * chapter that was never downloaded, and the download that never happened could never be asked for again. It
+     * cannot be read off the name, so the caller that is holding the chapter states it with the same rule
+     * [eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener.shouldOpenNovelReader] that decides where the chapter is
+     * read and the downloader writes it. One rule, asked once, is what keeps writer and reader from disagreeing.
+     *
+     * @param chapterName the name of the chapter to query.
+     * @param chapterScanlator the scanlator of the chapter to query.
+     * @param chapterUrl the url of the chapter to query.
+     * @param isNovelChapter whether this chapter is downloaded as one text file rather than as pages.
      */
-    fun getValidChapterDirNames(chapterName: String, chapterScanlator: String?, chapterUrl: String): List<String> {
+    fun getValidChapterDirNames(
+        chapterName: String,
+        chapterScanlator: String?,
+        chapterUrl: String,
+        isNovelChapter: Boolean = false,
+    ): List<String> {
         val parts = ChapterDirNameParts(chapterName, chapterScanlator, chapterUrl)
         val chapterDirName = parts.dirName(
             disallowNonAscii = libraryPreferences.disallowNonAsciiFilenames.get(),
             enableHash = libraryPreferences.enableChapterNameHash.get(),
         )
         val legacyChapterDirNames = getLegacyChapterDirNames(parts)
+        val novelSuffix = ".${Downloader.NOVEL_CHAPTER_EXTENSION}"
 
         return buildList {
             // Folder of images
             add(chapterDirName)
             // Archived chapters
             add("$chapterDirName.cbz")
+            // A novel chapter, downloaded as one file of prose
+            if (isNovelChapter) add(chapterDirName + novelSuffix)
 
             // any legacy names
             legacyChapterDirNames.forEach {
                 add(it)
                 add("$it.cbz")
+                if (isNovelChapter) add(it + novelSuffix)
             }
         }
     }

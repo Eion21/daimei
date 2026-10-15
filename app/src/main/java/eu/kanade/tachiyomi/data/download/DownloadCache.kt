@@ -411,18 +411,7 @@ class DownloadCache(
 
                         sourceDir.mangaDirs.values.forEach { mangaDir ->
                             val chapterDirs = mangaDir.dir?.listFiles().orEmpty()
-                                .mapNotNull {
-                                    when {
-                                        // Ignore incomplete downloads
-                                        it.name?.endsWith(Downloader.TMP_DIR_SUFFIX) == true -> null
-                                        // Folder of images
-                                        it.isDirectory -> it.name
-                                        // CBZ files
-                                        it.isFile && it.extension == "cbz" -> it.nameWithoutExtension
-                                        // Anything else is irrelevant
-                                        else -> null
-                                    }
-                                }
+                                .mapNotNull(::chapterDirNameOrNull)
                                 .toSet()
 
                             mangaDir.chapterDirs = chapterDirs
@@ -479,6 +468,28 @@ class DownloadCache(
             }
         }
     }
+}
+
+/**
+ * The chapter name [file] is indexed under, or null when it is not a downloaded chapter at all.
+ *
+ * A novel chapter is prose and is downloaded as one `.txt` where a manga chapter is a folder of images or a CBZ,
+ * so the index has to recognise both shapes to answer "is this chapter downloaded" for either. Both land on the
+ * same bare chapter name, which is what lets one lookup answer for both — and that name is the one the chapter
+ * would have been downloaded under, so a text file that merely happens to sit in a manga's folder is indexed
+ * under a name no chapter of that manga can match and cannot make it look downloaded.
+ */
+internal fun chapterDirNameOrNull(file: UniFile): String? = when {
+    // Ignore incomplete downloads
+    file.name?.endsWith(Downloader.TMP_DIR_SUFFIX) == true -> null
+    // Folder of images
+    file.isDirectory -> file.name
+    // CBZ files
+    file.isFile && file.extension == "cbz" -> file.nameWithoutExtension
+    // A novel chapter, downloaded as one file of prose
+    file.isFile && file.extension == Downloader.NOVEL_CHAPTER_EXTENSION -> file.nameWithoutExtension
+    // Anything else is irrelevant
+    else -> null
 }
 
 /**

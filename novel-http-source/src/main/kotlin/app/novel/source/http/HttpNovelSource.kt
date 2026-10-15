@@ -8,6 +8,8 @@ import app.novel.source.api.NovelSource
 import app.novel.source.api.SourceInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import logcat.logcat
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -122,9 +124,23 @@ class HttpNovelSource(
 
         try {
             httpClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) response.body.string() else null
+                if (response.isSuccessful) {
+                    response.body.string()
+                } else {
+                    // A page that answers with an error is a different thing from a page with no novels
+                    // in it, and the browse screen renders both the same way.
+                    logcat(LogPriority.WARN) { "HTTP ${response.code} fetching $url" }
+                    null
+                }
             }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            // `NovelSource` has no failure channel, so a fetch that never reached the server comes back as
+            // an empty result and is indistinguishable from a genuinely empty one. Without this line the
+            // usual cause — the fixture server not running, or on another port — looks like a bug in the
+            // parser rather than a connection that never happened.
+            // The throwable goes in the message rather than as an argument: `logcat`'s overload taking one
+            // lives in `core:common`, which is an Android module and would cost this one its purity.
+            logcat(LogPriority.ERROR) { "Could not reach $url: ${e.javaClass.simpleName}: ${e.message}" }
             null
         }
     }

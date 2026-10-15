@@ -21,5 +21,9 @@ dependencies {
     // dispatcher, so without this the first fetch on a device is a NetworkOnMainThreadException.
     implementation(libs.kotlinx.coroutines.core)
 
+    // Lets a failed fetch say why instead of being indistinguishable from an empty result. Inside the
+    // app the library detects Android and routes to android.util.Log, so it shows up in logcat.
+    implementation(libs.logcat)
+
     testImplementation(kotlin("test"))
 }

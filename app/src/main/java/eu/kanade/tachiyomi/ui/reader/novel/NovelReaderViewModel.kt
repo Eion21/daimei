@@ -27,6 +27,16 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
+ * A chapter that could not be opened, with the reason when there is one to give.
+ *
+ * [reason] is null more often than not: [GetChapterContent] resolves every miss — a source that is down, a chapter
+ * with no row, a memo naming a source this build does not ship — to a null content and names the reason in its log
+ * alone. What is left to escape it is a store that cannot be read at all, and that message is the only reason the
+ * reader can put on screen, so a null here means "nothing to name" rather than "nothing went wrong".
+ */
+data class NovelChapterError(val reason: String?)
+
+/**
  * State for one novel chapter.
  *
  * Owns no Android view: the host composable collects this and hands it to
@@ -45,8 +55,13 @@ class NovelReaderViewModel(
 
     private val _content = MutableStateFlow<ChapterContent?>(null)
 
-    /** Null until the chapter resolves, and null again if loading fails. */
+    /** Null until the chapter resolves, and null again if loading fails — [error] is what tells the two apart. */
     val content: StateFlow<ChapterContent?> = _content.asStateFlow()
+
+    private val _error = MutableStateFlow<NovelChapterError?>(null)
+
+    /** The failure to show instead of the reader, or null while a chapter is still being resolved. */
+    val error: StateFlow<NovelChapterError?> = _error.asStateFlow()
 
     private val _position = MutableStateFlow(ReadingPosition.START)
 
@@ -54,6 +69,13 @@ class NovelReaderViewModel(
     val position: StateFlow<ReadingPosition> = _position.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
+
+    /**
+     * True only while [load] is in flight.
+     *
+     * Neither a chapter that failed nor a chapter nobody has read yet publishes content, so this is what tells
+     * those two apart; [error] is in turn what tells a failure apart from a load that has not started.
+     */
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     /** Block count of the loaded chapter, kept so [saveProgress] can compute a percentage. */
@@ -80,25 +102,38 @@ class NovelReaderViewModel(
      * saved — and the position the reader then reports from that top gets persisted straight back over the saved
      * one, so the chapter opens at the top from then on.
      *
-     * A failure leaves [content] null and is logged rather than thrown: the host renders the reader's loading
-     * placeholder in that state, and a throw here would take the whole screen down for a recoverable miss.
+     * A failure publishes [error] and is logged rather than thrown: the reader shows it and offers to try again,
+     * while a throw here would take the whole screen down for a recoverable miss. Clearing the error first is what
+     * makes this one entry point serve as the retry too — the reader goes back to its loading state on the same tap.
+     *
+     * A chapter with no content returns before any of the state below is touched, because all of it describes a
+     * chapter that is in hand. History in particular has to mean something the reader reached, and a chapter whose
+     * text never loaded was not reached; writing it would put an unread chapter on the History screen, which is the
+     * mirror image of the bug this same rule fixed earlier — history that claims a read nobody did.
      */
     fun load(chapterId: Long) {
+        _error.value = null
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 val loaded = getChapterContent.await(chapterId)
                 if (loaded == null) {
                     logcat(LogPriority.WARN) { "No novel content available for chapter $chapterId" }
+                    // Published as a failure rather than left as a null content, which is the same value a load
+                    // still in flight publishes — the reader would spin over a chapter it can never show. The return
+                    // is what keeps a chapter nobody could read out of History; `finally` still ends the load, so
+                    // this is the error state rather than a spinner over it.
+                    _error.value = NovelChapterError(reason = null)
+                    return@launch
                 }
 
-                blockCount = loaded?.blocks?.size ?: 0
+                blockCount = loaded.blocks.size
                 chapterReadStartTime = Clock.System.now()
                 historyWrittenFor = null
 
                 _position.value = getReadingProgress.await(chapterId).toReadingPosition()
                 logcat(LogPriority.INFO) {
-                    "[novel-progress] LOAD chapter=$chapterId blocks=${loaded?.blocks?.size} " +
+                    "[novel-progress] LOAD chapter=$chapterId blocks=${loaded.blocks.size} " +
                         "restored=$_position.value"
                 }
                 _content.value = loaded
@@ -113,6 +148,9 @@ class NovelReaderViewModel(
                 blockCount = 0
                 _position.value = ReadingPosition.START
                 _content.value = null
+                // The one failure that arrives with something to say, which is the same message the manga reader
+                // puts under its own retry button.
+                _error.value = NovelChapterError(reason = e.message)
             } finally {
                 _isLoading.value = false
             }

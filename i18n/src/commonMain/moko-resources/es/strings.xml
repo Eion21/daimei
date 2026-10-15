@@ -261,6 +261,7 @@
     <string name="transition_current">Actual:</string>
     <string name="transition_pages_loading">Cargando páginas…</string>
     <string name="transition_pages_error">Error al cargar páginas: %1$s</string>
+    <string name="novel_chapter_load_error">No se pudo cargar este capítulo</string>
     <string name="migration_dialog_what_to_include">Elige qué datos incluir</string>
     <string name="pref_double_tap_anim_speed">Velocidad de animación de doble toque</string>
     <string name="pager_viewer">Por páginas</string>

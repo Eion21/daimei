@@ -30,18 +30,21 @@ class ChapterDownloadTest {
     // State: what a row shows.
 
     @Test
-    fun `a novel chapter with content on disk is downloaded`() {
+    fun `a chapter the reader cached is not downloaded`() {
+        // The badge describes the downloads folder, and opening a chapter writes its text to the content cache
+        // rather than to that folder. Answering "downloaded" from the cache is what made a chapter the user had
+        // only ever read show a download icon with nothing behind it.
         assertEquals(
-            Download.State.DOWNLOADED,
-            novelState(isContentCached = true),
+            Download.State.NOT_DOWNLOADED,
+            novelState(isDownloaded = false),
         )
     }
 
     @Test
-    fun `a novel chapter with nothing on disk is not downloaded`() {
+    fun `a novel chapter in the downloads folder is downloaded`() {
         assertEquals(
-            Download.State.NOT_DOWNLOADED,
-            novelState(isContentCached = false),
+            Download.State.DOWNLOADED,
+            novelState(isDownloaded = true),
         )
     }
 
@@ -49,21 +52,21 @@ class ChapterDownloadTest {
     fun `a novel chapter in the queue shows what the queue is doing`() {
         // A novel chapter is queued like any other, so the tap is visible from the first frame instead of only
         // after the fetch lands. This is the state the retired novel-only in-flight set used to produce.
-        assertEquals(Download.State.QUEUE, novelState(isContentCached = false, queued = Download.State.QUEUE))
+        assertEquals(Download.State.QUEUE, novelState(queued = Download.State.QUEUE))
         assertEquals(
             Download.State.DOWNLOADING,
-            novelState(isContentCached = false, queued = Download.State.DOWNLOADING),
+            novelState(queued = Download.State.DOWNLOADING),
         )
-        assertEquals(Download.State.ERROR, novelState(isContentCached = false, queued = Download.State.ERROR))
+        assertEquals(Download.State.ERROR, novelState(queued = Download.State.ERROR))
     }
 
     @Test
     fun `a novel chapter already on disk stays downloaded while the queue has nothing to say`() {
-        // What the row promises is that the content opens with no network. A finished download has left the queue
-        // and can never report itself again, so a null here is silence rather than an answer.
+        // What the row promises is that the chapter can be deleted, and a finished download has left the queue and
+        // can never report itself again, so a null here is silence rather than an answer.
         assertEquals(
             Download.State.DOWNLOADED,
-            novelState(isContentCached = true, queued = null),
+            novelState(isDownloaded = true, queued = null),
         )
     }
 
@@ -73,10 +76,10 @@ class ChapterDownloadTest {
     fun `a chapter already on disk reports the queue while the queue is working on it`() {
         // The same rule for both kinds, which is the point of having one rule: a re-download is visibly in
         // progress rather than silently hidden behind a finished download's state.
-        assertEquals(Download.State.QUEUE, novelState(isContentCached = true, queued = Download.State.QUEUE))
+        assertEquals(Download.State.QUEUE, novelState(isDownloaded = true, queued = Download.State.QUEUE))
         assertEquals(
             Download.State.DOWNLOADING,
-            imageState(queued = Download.State.DOWNLOADING, isImageDownloaded = true),
+            imageState(queued = Download.State.DOWNLOADING, isDownloaded = true),
         )
     }
 
@@ -95,19 +98,17 @@ class ChapterDownloadTest {
         // finished and left the queue.
         assertEquals(
             Download.State.DOWNLOADED,
-            imageState(queued = null, isImageDownloaded = true),
+            imageState(queued = null, isDownloaded = true),
         )
     }
 
     @Test
-    fun `an image chapter is not downloaded just because some novel chapter is cached`() {
-        // The regression this guards is drift in one direction only: if the cached-content set leaked into the
-        // image branch, every image chapter of every manga would start reading as downloaded the first time any
-        // novel chapter anywhere was cached.
-        assertEquals(
-            Download.State.NOT_DOWNLOADED,
-            imageState(queued = null, isContentCached = true),
-        )
+    fun `a chapter nobody downloaded reads the same whichever kind it is`() {
+        // The guard this replaces asked whether the cached-content set could leak into the image branch and give
+        // every image chapter of every manga a download nobody made. There is no cached-content input left to
+        // leak, so what is pinned now is the stronger property behind it: one rule, both kinds, no exceptions.
+        assertEquals(Download.State.NOT_DOWNLOADED, novelState())
+        assertEquals(Download.State.NOT_DOWNLOADED, imageState(queued = null))
     }
 
     // State: the queue's own answer cannot outlive it.
@@ -342,24 +343,19 @@ class ChapterDownloadTest {
     // Helpers.
 
     private fun novelState(
-        isContentCached: Boolean,
         queued: Download.State? = null,
+        isDownloaded: Boolean = false,
     ) = chapterDownloadState(
-        isNovel = true,
-        isContentCached = isContentCached,
         queuedDownloadState = queued,
-        isImageDownloaded = false,
+        isDownloaded = isDownloaded,
     )
 
     private fun imageState(
         queued: Download.State?,
-        isImageDownloaded: Boolean = false,
-        isContentCached: Boolean = false,
+        isDownloaded: Boolean = false,
     ) = chapterDownloadState(
-        isNovel = false,
-        isContentCached = isContentCached,
         queuedDownloadState = queued,
-        isImageDownloaded = isImageDownloaded,
+        isDownloaded = isDownloaded,
     )
 
     /**

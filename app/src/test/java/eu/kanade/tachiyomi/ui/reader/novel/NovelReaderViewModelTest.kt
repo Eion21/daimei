@@ -17,7 +17,9 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.interactor.UpdateChapter
@@ -52,6 +54,9 @@ import kotlin.time.Clock
  * changes, so the one thing the ViewModel must guarantee is that content never arrives without the saved position
  * already in hand. Everything the reader does afterwards — reporting progress, saving it, marking read — assumes
  * that.
+ *
+ * The other half is the state that is not content. A chapter that cannot be opened has to be told apart from one
+ * that is still being opened, because both used to arrive as the same null and the reader drew a spinner for either.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NovelReaderViewModelTest {
@@ -70,6 +75,11 @@ class NovelReaderViewModelTest {
         ChapterContentRepository {
         private val cached = initial.toMutableMap()
 
+        /** Seeds what a later read will find, the way an already fetched chapter sits on disk. */
+        fun put(chapterId: Long, content: ChapterContent) {
+            cached[chapterId] = content
+        }
+
         override suspend fun get(chapterId: Long): ChapterContent? = cached[chapterId]
         override fun getAsFlow(chapterId: Long): Flow<ChapterContent?> = emptyFlow()
 
@@ -85,6 +95,22 @@ class NovelReaderViewModelTest {
         // The per-manga cached set is the chapter list's business, not this reader view model's: nothing here
         // ever asks for it. Spelled out rather than defaulted on the interface so a fake that needs the
         // behaviour has to say so.
+        override fun getCachedChapterIdsByMangaId(mangaId: Long): Flow<Set<Long>> = emptyFlow()
+    }
+
+    /**
+     * A content store that is itself the failure.
+     *
+     * `GetChapterContent` resolves a source that is down, a chapter with no row and a memo naming a source this
+     * build does not ship into a null and names them in its log only. What is left to escape it is a store that
+     * cannot be read at all, and that exception is the one reason the reader can put on screen.
+     */
+    private class UnreadableContentRepository(private val reason: String) : ChapterContentRepository {
+        override suspend fun get(chapterId: Long): ChapterContent? = throw IllegalStateException(reason)
+        override fun getAsFlow(chapterId: Long): Flow<ChapterContent?> = emptyFlow()
+
+        override suspend fun save(chapterId: Long, content: ChapterContent): String = throw NotImplementedError()
+        override suspend fun delete(chapterId: Long): Unit = throw NotImplementedError()
         override fun getCachedChapterIdsByMangaId(mangaId: Long): Flow<Set<Long>> = emptyFlow()
     }
 
@@ -446,7 +472,176 @@ class NovelReaderViewModelTest {
         }
     }
 
+    @Test
+    fun `a cached chapter opens with nothing to fall back on`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // What the download badge stopped claiming must stay true: the reader answers from the cache before it
+            // asks anything else. `SourceRegistry()` holds no source and the chapter repository has no row, so every
+            // step past the cache would miss — and this is the state a chapter the reader only ever read is in.
+            val viewModel = viewModel()
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertEquals(content, viewModel.content.value)
+            assertNull(viewModel.error.value, "a chapter that opened reported an error")
+            assertFalse(viewModel.isLoading.value, "a chapter that opened was still loading")
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    // A failure, which is not the loading state.
+
+    @Test
+    fun `a chapter with no content anywhere fails instead of loading forever`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // Nothing cached and no chapter row, so there is nothing to fetch either: this is the offline reader
+            // that used to spin on a `CircularProgressIndicator` for as long as the screen was open.
+            val viewModel = viewModel(content = FakeContentRepository())
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertNotNull(viewModel.error.value, "an impossible read stayed indistinguishable from one in progress")
+            assertNull(viewModel.content.value)
+            assertFalse(viewModel.isLoading.value, "the reader would keep spinning over a failure that had landed")
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `a failure with no reason to name still fails rather than staying silent`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // The source being down is the case that reaches the reader most often, and `GetChapterContent` logs
+            // the why without handing it over. The reader has to say something anyway, because the alternative is
+            // the spinner this replaced.
+            val viewModel = viewModel(content = FakeContentRepository())
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            val error = viewModel.error.value
+            assertNotNull(error, "a failure with nothing to say did not report one")
+            assertNull(error?.reason, "a reason was invented for a failure that has none")
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `the error carries the reason when the failure has one`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val viewModel = viewModel(content = UnreadableContentRepository(STORE_FAILURE))
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertEquals(STORE_FAILURE, viewModel.error.value?.reason)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `retrying clears the error and loads the chapter`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // The real case: the chapter could not be opened offline, the reader came back online and tapped
+            // retry. Same call, so the error has to go before the load rather than after it.
+            val store = FakeContentRepository()
+            val viewModel = viewModel(content = store)
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+            assertNotNull(viewModel.error.value, "nothing to retry from")
+
+            store.put(CHAPTER_ID, content)
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertNull(viewModel.error.value, "the error outlived the load that resolved it")
+            assertEquals(content, viewModel.content.value)
+            assertFalse(viewModel.isLoading.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `a retry that fails again fails again rather than going back to loading`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // Clearing the error on the way in is what makes retry work, and it is also the one place the failure
+            // state could be dropped by accident — leaving the reader spinning for good, which is the bug itself.
+            val viewModel = viewModel(content = FakeContentRepository())
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertNotNull(viewModel.error.value, "the second failure left the reader loading forever")
+            assertNull(viewModel.content.value)
+            assertFalse(viewModel.isLoading.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `a chapter whose content failed to load writes no history`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // History describes something the reader reached, and a chapter that never opened was not reached. This
+            // is the same rule as the one that made Mihon write history on open rather than only at the end.
+            val history = FakeHistoryRepository()
+            val viewModel = viewModel(content = FakeContentRepository(), history = history)
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertNotNull(viewModel.error.value, "nothing failed, so this pinned nothing")
+            assertTrue(history.updates.isEmpty(), "a chapter nobody could read was written to History")
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `a chapter that opens after a failed attempt writes its history once`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // The retry is not a lesser open: once the chapter resolves it is a chapter the reader reached, so it
+            // belongs in History. Writing it here is also the only thing the failed attempt left undone.
+            val store = FakeContentRepository()
+            val history = FakeHistoryRepository()
+            val viewModel = viewModel(content = store, history = history)
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+            store.put(CHAPTER_ID, content)
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            val update = history.updates.single()
+            assertEquals(CHAPTER_ID, update.chapterId)
+            assertNull(viewModel.error.value, "the retry failed instead of opening the chapter")
+            assertEquals(content, viewModel.content.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private companion object {
         const val CHAPTER_ID = 7L
+
+        /** Stands in for a content store that cannot be read, which is the one failure that carries a message. */
+        const val STORE_FAILURE = "the chapter content store is unavailable"
     }
 }

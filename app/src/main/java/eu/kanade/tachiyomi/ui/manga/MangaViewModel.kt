@@ -44,7 +44,6 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
@@ -101,7 +100,6 @@ import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.model.applyFilter
-import tachiyomi.domain.novel.repository.ChapterContentRepository
 import tachiyomi.domain.novel.repository.ReadingProgressRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
@@ -137,7 +135,6 @@ class MangaViewModel(
     private val getCategories: GetCategories,
     private val getTracks: GetTracks,
     private val readingProgressRepository: ReadingProgressRepository,
-    private val chapterContentRepository: ChapterContentRepository,
     private val addTracks: AddTracks,
     private val setMangaCategories: SetMangaCategories,
     private val filterChaptersForDownload: FilterChaptersForDownload,
@@ -214,23 +211,17 @@ class MangaViewModel(
     }
 
     /**
-     * Everything the chapter list needs to know about novel chapters, in one value so it can be one input of
-     * the chapter list's combine.
+     * How far through each novel chapter the reader got, as the whole percentage the chapter list shows.
      *
-     * Both are empty for a manga of image chapters, since only the novel reader writes a position and only a novel
-     * source caches content. They are read for every manga anyway: each is one indexed query, and a novel's source
-     * resolves to a stub before it is installed, so asking the source what it is would be a second way to get this
-     * wrong.
+     * Empty for a manga of image chapters, since only the novel reader writes a position. It is read for every manga
+     * anyway: it is one indexed query, and a novel's source resolves to a stub before it is installed, so asking the
+     * source what it is would be a second way to get this wrong.
      *
-     * There is no third input for work in flight any more. A novel chapter is queued like any other one, so the
-     * queue holds its state and the row below has nothing extra to track.
+     * It used to be joined here by the set of chapters with cached content, which is how the chapter list came to
+     * call a chapter downloaded once it had merely been opened. Nothing needs those ids here any more, so the query
+     * went away with the rule that asked for it.
      */
-    private val novelChapters = combine(
-        readingProgressRepository.getPercentByMangaId(mangaId).distinctUntilChanged(),
-        chapterContentRepository.getCachedChapterIdsByMangaId(mangaId).distinctUntilChanged(),
-    ) { readProgress, cachedChapterIds ->
-        NovelChapterState(readProgress, cachedChapterIds)
-    }
+    private val novelReadProgress = readingProgressRepository.getPercentByMangaId(mangaId).distinctUntilChanged()
 
     private val mangaAndChapters = combine(
         flow {
@@ -241,12 +232,12 @@ class MangaViewModel(
             .distinctUntilChanged(),
         downloadCache.changes.pausedWhileUnsubscribed(),
         downloadManager.queueState.pausedWhileUnsubscribed(),
-        novelChapters,
-    ) { (manga, chapters), _, _, novel ->
+        novelReadProgress,
+    ) { (manga, chapters), _, _, readProgress ->
         MangaAndChapters(
             manga = manga,
             source = sourceManager.getOrStub(manga.source),
-            chapters = chapters.toChapterListItems(manga, novel),
+            chapters = chapters.toChapterListItems(manga, readProgress),
         )
     }
 
@@ -635,26 +626,21 @@ class MangaViewModel(
 
     private fun List<Chapter>.toChapterListItems(
         manga: Manga,
-        novel: NovelChapterState,
+        novelReadProgress: Map<Long, Float>,
     ): List<ChapterList.Item> {
         val isLocal = manga.isLocal()
         val queuedDownloads = if (isLocal) emptyMap() else downloadManager.getQueuedDownloadsByChapterId()
         val downloadedChapterIds = if (isLocal) emptySet() else downloadManager.getDownloadedChapterIds(this, manga)
         return map { chapter ->
-            // The one rule that says a chapter is a novel's, read once per chapter and asked of both the state
-            // below and the action dispatcher, so the row and the button cannot disagree about which reader this
-            // chapter belongs to.
-            val isNovel = ChapterOpener.shouldOpenNovelReader(chapter)
-
             ChapterList.Item(
                 chapter = chapter,
                 downloadState = chapterDownloadState(
-                    isNovel = isNovel,
-                    isContentCached = isNovel && chapter.id in novel.cachedChapterIds,
                     queuedDownloadState = queuedDownloads[chapter.id]?.status,
-                    isImageDownloaded = isLocal || chapter.id in downloadedChapterIds,
+                    // The download index is the whole answer for both kinds, which is what lets the badge mean the
+                    // downloads folder. A novel chapter that was only ever read is absent from it, and says so.
+                    isDownloaded = isLocal || chapter.id in downloadedChapterIds,
                 ),
-                novelReadProgress = novel.readProgress[chapter.id],
+                novelReadProgress = novelReadProgress[chapter.id],
             )
         }
     }
@@ -1151,11 +1137,6 @@ class MangaViewModel(
 
     private data class MangaAndChapters(val manga: Manga, val source: Source, val chapters: List<ChapterList.Item>)
 
-    private data class NovelChapterState(
-        val readProgress: Map<Long, Float>,
-        val cachedChapterIds: Set<Long>,
-    )
-
     sealed interface State {
         @Immutable
         data object Loading : State
@@ -1310,26 +1291,21 @@ internal fun novelChapterProgressPercent(read: Boolean, percent: Float?): Int? {
  *
  * Every chapter is downloaded by the same queue now, so the queue's own state is the first answer for both kinds
  * and there is no second mechanism whose state has to be consulted instead. What is left is the queue's transient
- * state, then the two things that mean "the content opens with no network": a chapter in the download index, which
- * a novel's text file is in as much as a manga's page folder is, and a novel chapter's cached text, which is what
- * the reader writes when a chapter is opened and never had to be downloaded at all.
+ * state, then whether the chapter is in the download index, which is where a novel's text file is as much as a
+ * manga's page folder is.
  *
- * The novel arguments are read only when the chapter is one, so an image row answers exactly what it answered
- * before novels existed. Letting the drift run the other way — a cached novel chapter changing what an image
- * chapter shows — is what the guard test below pins.
+ * The badge describes the downloads folder, so nothing else may answer for it. In particular the reader's own
+ * content cache may not: opening a chapter writes its text there, and treating that as a download is what marked
+ * every chapter the user had only read as downloaded with nothing to delete. Reading such a chapter with no network
+ * is still true afterwards, and still true through [tachiyomi.domain.novel.interactor.GetChapterContent], which
+ * reads that cache before it asks the source — what was lost is only the icon.
  */
 internal fun chapterDownloadState(
-    isNovel: Boolean,
-    isContentCached: Boolean,
     queuedDownloadState: Download.State?,
-    isImageDownloaded: Boolean,
+    isDownloaded: Boolean,
 ): Download.State = when {
     queuedDownloadState != null -> queuedDownloadState
-    // Gated on the chapter being a novel one here rather than only at the call site, so that is where the rule
-    // lives: the cached-content set belongs to a novel source alone, and letting it answer for an image chapter
-    // would show a download nobody made on every manga in the app.
-    isNovel && isContentCached -> Download.State.DOWNLOADED
-    isImageDownloaded -> Download.State.DOWNLOADED
+    isDownloaded -> Download.State.DOWNLOADED
     else -> Download.State.NOT_DOWNLOADED
 }
 

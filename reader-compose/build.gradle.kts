@@ -30,4 +30,10 @@ dependencies {
     implementation(libs.bundles.coil)
 
     implementation(libs.bundles.kotlinx.coroutines)
+
+    // The surface-state decision is pure, so it needs nothing but the test framework: rendering it would pull in
+    // Robolectric for a `when` with four cases. JUnit Jupiter because `mihonx.plugins.android.base` already runs
+    // this module's tests on the JUnit platform.
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }

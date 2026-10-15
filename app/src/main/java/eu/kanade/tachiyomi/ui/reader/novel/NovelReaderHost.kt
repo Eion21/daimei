@@ -15,6 +15,8 @@ import app.novel.reader.core.ReaderSettings
 import app.novel.reader.core.ReadingPosition
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import mihon.app.di.appGraph
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
 
 /**
@@ -33,6 +35,7 @@ fun NovelReaderHost(
     val viewModel = metroViewModel<NovelReaderViewModel>()
 
     val content by viewModel.content.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
     val position by viewModel.position.collectAsStateWithLifecycle()
 
     // Each preference is collected on its own, the way the manga reader's settings pages do it: reading them
@@ -98,6 +101,16 @@ fun NovelReaderHost(
         initialContent = content,
         initialPosition = position,
         settings = settings,
+        // Resolved here because `reader-compose` holds no resources of its own. Keyed on the error so a preference
+        // emission — this host recomposes on every one of them — does not re-read the resource for nothing.
+        errorMessage = remember(error) {
+            error?.let { context.stringResource(MR.strings.novel_chapter_load_error) }
+        },
+        errorReason = error?.reason,
+        retryLabel = remember { context.stringResource(MR.strings.action_retry) },
+        // Reloading the same chapter is the whole of the retry: the view model clears the error on the way in, so
+        // the reader goes back to loading and then either shows the chapter or the failure again.
+        onRetry = { viewModel.load(chapterId) },
         onProgress = onProgress,
         modifier = modifier,
     )

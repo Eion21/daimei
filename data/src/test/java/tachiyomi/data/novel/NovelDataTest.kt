@@ -1,6 +1,7 @@
 package tachiyomi.data.novel
 
 import app.cash.sqldelight.async.coroutines.awaitAsOne
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
@@ -17,6 +18,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -33,11 +36,15 @@ import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.data.Reading_progress
 import tachiyomi.data.StringListColumnAdapter
 import tachiyomi.data.UpdateStrategyColumnAdapter
+import tachiyomi.data.chapter.ChapterRepositoryImpl
+import tachiyomi.domain.chapter.model.ChapterRemoteUpdate
+import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.novel.repository.ReadingProgress
 import java.io.File
 import kotlin.time.Clock
 import app.novel.source.api.Chapter as NovelChapter
 import app.novel.source.api.Novel as NovelEntry
+import tachiyomi.domain.chapter.model.Chapter as SyncedChapter
 
 /**
  * Proves the novel tables survive a round trip through the real database, including the foreign keys onto
@@ -558,6 +565,369 @@ class NovelDataTest {
             // and a file without its row is invisible here and harmless.
             assertEquals(emptySet<Long>(), repository.getCachedChapterIdsByMangaId(mangaId).first())
             assertFalse(path.exists())
+            driver.close()
+        }
+    }
+
+    // Gap 1: a chapter row that goes away takes its novel state with it.
+    //
+    // The only statement in the project that deletes a chapter row is `removeChaptersWithIds`, reached from a
+    // sync with the source, and the two novel tables declare `ON DELETE CASCADE` onto `chapter` for a cascade
+    // that never fires because nothing in the project turns `PRAGMA foreign_keys` on. So without cleanup here a
+    // chapter that the source withdrew leaves its text on disk and its position in the database forever.
+
+    /** Removes chapter rows the only way the app does: a sync with the source reporting them gone. */
+    private suspend fun removeChaptersFromSource(repository: ChapterRepository, chapterIds: List<Long>) {
+        repository.updateFromRemote(removedIds = chapterIds, added = emptyList(), updated = emptyList())
+    }
+
+    /** The chapter repository, over the novel state it has to take with a removed chapter. */
+    private fun Database.chapterRepository(contentDir: NovelContentDir): ChapterRepositoryImpl =
+        ChapterRepositoryImpl(
+            database = this,
+            chapterContentRepository = ChapterContentRepositoryImpl(this, contentDir),
+            readingProgressRepository = ReadingProgressRepositoryImpl(this),
+        )
+
+    private fun Database.contentRepository(contentDir: NovelContentDir): ChapterContentRepositoryImpl =
+        ChapterContentRepositoryImpl(this, contentDir)
+
+    /** The path a cached chapter's row still holds, or null once the row is gone. */
+    private suspend fun Database.contentFilePathOf(chapterId: Long): String? =
+        chapter_contentQueries.getByChapterId(chapterId).awaitAsOneOrNull()?.file_path
+
+    private suspend fun Database.hasSavedPositionFor(chapterId: Long): Boolean =
+        reading_progressQueries.getByChapterId(chapterId).awaitAsOneOrNull() != null
+
+    private suspend fun Database.hasChapter(chapterId: Long): Boolean =
+        chapterQueries.getChapterById(chapterId).awaitAsOneOrNull() != null
+
+    private suspend fun Database.cacheContent(repository: ChapterContentRepositoryImpl, chapterId: Long): File =
+        File(repository.save(chapterId, ChapterContent(listOf(ContentBlock.Paragraph("hola")))))
+
+    @Test
+    fun `a removed chapter takes its cached text and its saved position with it`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "removed-chapter-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+            val file = database.cacheContent(contentRepository, chapterId)
+            ReadingProgressRepositoryImpl(database)
+                .save(chapterId, ReadingProgress(2, 0, blockFraction = 0.5f, percent = 0.5f))
+            assertEquals(setOf(chapterId), contentRepository.getCachedChapterIdsByMangaId(mangaId).first())
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(chapterId))
+
+            // The chapter, its text and its position: the row, the file behind it, and the position that made
+            // the chapter look part-read. Any one of the three surviving is the leak.
+            assertFalse(database.hasChapter(chapterId))
+            assertNull(database.contentFilePathOf(chapterId))
+            assertFalse(file.exists())
+            assertFalse(database.hasSavedPositionFor(chapterId))
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `removing a chapter that never had novel state fails on nothing`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "removed-plain-chapter-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            assertNull(database.contentFilePathOf(chapterId))
+            assertFalse(database.hasSavedPositionFor(chapterId))
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(chapterId))
+
+            // The overwhelming majority of removed chapters are images, so the cleanup has to be a no-op for
+            // them rather than a query that finds nothing and a delete that throws.
+            assertFalse(database.hasChapter(chapterId))
+            assertNull(database.contentFilePathOf(chapterId))
+            assertFalse(database.hasSavedPositionFor(chapterId))
+            val cached = database.contentRepository(contentDir).getCachedChapterIdsByMangaId(mangaId).first()
+            assertEquals(emptySet<Long>(), cached)
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `removing several chapters cleans up every one of them`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "removed-many-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+            val progressRepository = ReadingProgressRepositoryImpl(database)
+
+            val firstChapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(firstChapterId)
+            val secondChapterId = database.insertChapterOf(mangaId, "c2", "Capítulo 2")
+            val thirdChapterId = database.insertChapterOf(mangaId, "c3", "Capítulo 3")
+
+            val files = listOf(firstChapterId, secondChapterId, thirdChapterId)
+                .associateWith { chapterId ->
+                    database.cacheContent(contentRepository, chapterId).also { file ->
+                        progressRepository.save(
+                            chapterId,
+                            ReadingProgress(1, 0, blockFraction = 0.25f, percent = 0.25f),
+                        )
+                        assertTrue(file.exists())
+                    }
+                }
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(firstChapterId, secondChapterId))
+
+            listOf(firstChapterId, secondChapterId).forEach { chapterId ->
+                assertFalse(database.hasChapter(chapterId), "chapter $chapterId survived")
+                assertNull(database.contentFilePathOf(chapterId), "content row of $chapterId survived")
+                assertFalse(files.getValue(chapterId).exists(), "content file of $chapterId survived")
+                assertFalse(database.hasSavedPositionFor(chapterId), "saved position of $chapterId survived")
+            }
+            // And the one that was not removed keeps all three, so the cleanup is not a blanket wipe.
+            assertTrue(database.hasChapter(thirdChapterId))
+            assertNotNull(database.contentFilePathOf(thirdChapterId))
+            assertTrue(files.getValue(thirdChapterId).exists())
+            assertTrue(database.hasSavedPositionFor(thirdChapterId))
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `a chapter whose content file is already gone is still cleaned up`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "missing-file-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+            val file = database.cacheContent(contentRepository, chapterId)
+            ReadingProgressRepositoryImpl(database)
+                .save(chapterId, ReadingProgress(0, 0, blockFraction = 0f, percent = 0f))
+            // The platform can reclaim the cache directory at any time, so the row can outlive its file.
+            assertTrue(file.delete())
+            assertFalse(file.exists())
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(chapterId))
+
+            // The row has to go even though there is no file to delete, or it stays there forever pointing at
+            // a chapter that no longer exists.
+            assertFalse(database.hasChapter(chapterId))
+            assertNull(database.contentFilePathOf(chapterId))
+            assertFalse(database.hasSavedPositionFor(chapterId))
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `another entry's cached text survives another entry's removal`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "sibling-manga-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+
+            val removedChapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val removedMangaId = database.mangaIdOfChapter(removedChapterId)
+            val otherChapterId = database.insertNovelAndChapter(remoteUrl = "n2", chapterUrl = "c1")
+            val otherMangaId = database.mangaIdOfChapter(otherChapterId)
+            val otherFile = database.cacheContent(contentRepository, otherChapterId)
+            database.cacheContent(contentRepository, removedChapterId)
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(removedChapterId))
+
+            // Two entries with the same chapter url, so only the id taken from the sync separates them.
+            assertNotEquals(removedMangaId, otherMangaId)
+            assertNull(database.contentFilePathOf(removedChapterId))
+            assertEquals(
+                setOf(otherChapterId),
+                contentRepository.getCachedChapterIdsByMangaId(otherMangaId).first(),
+            )
+            assertTrue(otherFile.exists())
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `a sync that removes no chapter leaves the cached text alone`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "nothing-removed-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+            val file = database.cacheContent(contentRepository, chapterId)
+            ReadingProgressRepositoryImpl(database)
+                .save(chapterId, ReadingProgress(4, 0, blockFraction = 0.6f, percent = 0.6f))
+
+            // The common sync: new chapters arrive, none go away.
+            removeChaptersFromSource(database.chapterRepository(contentDir), emptyList())
+
+            assertTrue(database.hasChapter(chapterId))
+            assertNotNull(database.contentFilePathOf(chapterId))
+            assertTrue(file.exists())
+            assertTrue(database.hasSavedPositionFor(chapterId))
+            assertEquals(setOf(chapterId), contentRepository.getCachedChapterIdsByMangaId(mangaId).first())
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `an image chapter reads as never having had novel state, before or after removal`(
+        @TempDir tempDir: File,
+    ) = runTest {
+        val dbPath = File(tempDir, "image-chapter-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+            val progressRepository = ReadingProgressRepositoryImpl(database)
+
+            // An image entry writes nothing on the novel side at all: no content, no position, no file.
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "chapter/1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            assertEquals(emptySet<Long>(), contentRepository.getCachedChapterIdsByMangaId(mangaId).first())
+            assertEquals(emptyMap<Long, Float>(), progressRepository.getPercentByMangaId(mangaId).first())
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(chapterId))
+
+            // Nothing novel was there to remove, and the per-manga reads an image entry relies on still answer
+            // the same thing afterwards.
+            assertFalse(database.hasChapter(chapterId))
+            assertEquals(emptySet<Long>(), contentRepository.getCachedChapterIdsByMangaId(mangaId).first())
+            assertEquals(emptyMap<Long, Float>(), progressRepository.getPercentByMangaId(mangaId).first())
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `a sync that removes a chapter and adds another keeps the new one`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "sync-add-and-remove-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val removedChapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(removedChapterId)
+            val renamedChapterId = database.insertChapterOf(mangaId, "c2", "Capítulo 2")
+            val contentRepository = ChapterContentRepositoryImpl(database, contentDir)
+            val removedFile = database.cacheContent(contentRepository, removedChapterId)
+
+            val stored = database.chapterRepository(contentDir).updateFromRemote(
+                removedIds = listOf(removedChapterId),
+                added = listOf(
+                    SyncedChapter.create().copy(
+                        mangaId = mangaId,
+                        url = "c3",
+                        name = "Capítulo 3",
+                        chapterNumber = 3.0,
+                        dateFetch = Clock.System.now(),
+                    ),
+                ),
+                updated = listOf(
+                    ChapterRemoteUpdate(
+                        id = renamedChapterId,
+                        name = "Capítulo dos",
+                        scanlator = null,
+                        chapterNumber = 2.0,
+                        dateUpload = null,
+                        sourceOrder = 1,
+                        memo = emptyMemo,
+                    ),
+                ),
+            )
+
+            // All three halves of one sync: the chapter that went away is gone and cleaned up after, the one
+            // that arrived is stored and returned, and the one that was renamed kept its row and its new name.
+            assertEquals(1, stored.size)
+            val addedChapterId = stored.single().id
+            assertTrue(database.hasChapter(addedChapterId))
+            assertNull(database.contentFilePathOf(removedChapterId))
+            assertFalse(removedFile.exists())
+            val renamed = database.chapterQueries.getChapterById(renamedChapterId).awaitAsOne()
+            assertEquals("Capítulo dos", renamed.remote_name)
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `removing a chapter that is already gone fails on nothing`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "already-removed-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            val file = database.cacheContent(ChapterContentRepositoryImpl(database, contentDir), chapterId)
+
+            // The chapter row can be gone while its novel state is not, which is exactly the state this cleanup
+            // exists to heal. Cleaning up after an id that is no longer there has to be a no-op, not a throw.
+            database.chapterQueries.removeChaptersWithIds(listOf(chapterId))
+            assertFalse(database.hasChapter(chapterId))
+            assertNotNull(database.contentFilePathOf(chapterId))
+            assertTrue(file.exists())
+
+            removeChaptersFromSource(database.chapterRepository(contentDir), listOf(chapterId))
+
+            assertNull(database.contentFilePathOf(chapterId))
+            assertFalse(file.exists())
+            assertEquals(
+                emptySet<Long>(),
+                database.contentRepository(contentDir).getCachedChapterIdsByMangaId(mangaId).first(),
+            )
+            driver.close()
+        }
+    }
+
+    // Gap 2: clearing a manga's downloads means clearing every cached chapter it has.
+
+    @Test
+    fun `clearing a manga's downloads takes every cached chapter's text with it`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "clear-manga-downloads-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val contentDir = NovelContentDir(File(tempDir, "content"))
+            val repository = ChapterContentRepositoryImpl(database, contentDir)
+
+            val firstChapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "c1")
+            val mangaId = database.mangaIdOfChapter(firstChapterId)
+            val secondChapterId = database.insertChapterOf(mangaId, "c2", "Capítulo 2")
+            val firstFile = database.cacheContent(repository, firstChapterId)
+            val secondFile = database.cacheContent(repository, secondChapterId)
+
+            val otherChapterId = database.insertNovelAndChapter(remoteUrl = "n2", chapterUrl = "c1")
+            val otherMangaId = database.mangaIdOfChapter(otherChapterId)
+            val otherFile = database.cacheContent(repository, otherChapterId)
+
+            // Exactly the read the manga screen asks before it offers the delete: which of this manga's
+            // chapters have text on disk. Then the delete it runs for each of them.
+            val cached = repository.getCachedChapterIdsByMangaId(mangaId).first()
+            assertEquals(setOf(firstChapterId, secondChapterId), cached)
+            cached.forEach { repository.delete(it) }
+
+            assertEquals(emptySet<Long>(), repository.getCachedChapterIdsByMangaId(mangaId).first())
+            listOf(firstChapterId, secondChapterId).forEach { chapterId ->
+                assertNull(database.contentFilePathOf(chapterId))
+            }
+            assertFalse(firstFile.exists())
+            assertFalse(secondFile.exists())
+            // Another entry's text is none of this entry's business.
+            assertEquals(setOf(otherChapterId), repository.getCachedChapterIdsByMangaId(otherMangaId).first())
+            assertTrue(otherFile.exists())
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `an image entry has nothing to clear, and clearing it stays a no-op`(@TempDir tempDir: File) = runTest {
+        val dbPath = File(tempDir, "clear-image-entry-test.db").absolutePath
+        openDatabase(dbPath).let { (driver, database) ->
+            val chapterId = database.insertNovelAndChapter(remoteUrl = "n1", chapterUrl = "chapter/1")
+            val mangaId = database.mangaIdOfChapter(chapterId)
+            val repository = ChapterContentRepositoryImpl(database, NovelContentDir(File(tempDir, "content")))
+
+            // What the delete runs over, for an entry whose downloads are all pages in the image queue.
+            val cached = repository.getCachedChapterIdsByMangaId(mangaId).first()
+            assertEquals(emptySet<Long>(), cached)
+            cached.forEach { repository.delete(it) }
+
+            // The chapter row is the image queue's business and this loop must not have touched it.
+            assertTrue(database.hasChapter(chapterId))
+            assertNull(database.contentFilePathOf(chapterId))
             driver.close()
         }
     }

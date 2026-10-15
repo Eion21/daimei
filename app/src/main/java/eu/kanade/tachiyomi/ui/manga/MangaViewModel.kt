@@ -534,18 +534,60 @@ class MangaViewModel(
 
     /**
      * Returns true if the manga has any downloads.
+     *
+     * The question is asked of both mechanisms a download can live in, because each knows nothing about the
+     * other: the queue only ever holds image pages and the content cache only ever holds novel text. A novel
+     * entry is therefore no longer told it has nothing downloaded while its chapters sit in the cache directory.
      */
-    private fun hasDownloads(): Boolean {
+    private suspend fun hasDownloads(): Boolean {
         val manga = successState?.manga ?: return false
-        return downloadManager.getDownloadCount(manga) > 0
+        return mangaDownloadPlan(manga) != MangaDownloadPlan.Nothing
     }
 
     /**
      * Deletes all the downloads for the manga.
+     *
+     * Planned again here rather than reusing what the prompt was built from: the user is answering a snackbar
+     * that may have been on screen for a while, and what is on disk now is what they agreed to delete.
      */
-    private fun deleteDownloads() {
+    private suspend fun deleteDownloads() {
         val state = successState ?: return
-        appScope.launch { downloadManager.deleteManga(state.manga, state.source) }
+        when (val plan = mangaDownloadPlan(state.manga)) {
+            MangaDownloadPlan.Nothing -> Unit
+            MangaDownloadPlan.DeleteImagePages ->
+                appScope.launch { downloadManager.deleteManga(state.manga, state.source) }
+            is MangaDownloadPlan.DeleteNovelContent -> deleteNovelContent(plan.chapterIds.toList())
+        }
+    }
+
+    /**
+     * What this manga's downloads are, read from both places a download can live.
+     *
+     * The prompt above and the delete below both go through here, so the two cannot answer differently: what
+     * the user was offered to clear is what clearing it actually does.
+     */
+    private suspend fun mangaDownloadPlan(manga: Manga): MangaDownloadPlan = planMangaDownloads(
+        imageDownloadCount = downloadManager.getDownloadCount(manga),
+        cachedNovelChapterIds = readCachedNovelChapterIds(manga.id),
+    )
+
+    /**
+     * The chapters of this manga whose text is on disk, read once for the plan above.
+     *
+     * The same per-manga read the chapter list is built from, taken as a snapshot rather than collected: this
+     * runs once, on the way to a snackbar, and a chapter cached a second later is simply a chapter the user did
+     * not agree to delete. A read that fails answers with nothing, which leaves the image behaviour exactly as
+     * it was instead of failing the removal the user just asked for.
+     */
+    private suspend fun readCachedNovelChapterIds(mangaId: Long): Set<Long> {
+        return try {
+            chapterContentRepository.getCachedChapterIdsByMangaId(mangaId).first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "[novel] Reading the cached chapters of manga $mangaId failed" }
+            emptySet()
+        }
     }
 
     /**
@@ -1440,6 +1482,46 @@ internal fun withQueuedDownloadState(
  */
 internal fun List<Chapter>.splitByDownloadMechanism(): Pair<List<Chapter>, List<Chapter>> =
     partition(ChapterOpener::shouldOpenNovelReader)
+
+/**
+ * What deleting a manga's downloads has to clear.
+ *
+ * A manga's downloads are pages in the image queue, novel text in the content cache, or both empty, and the two
+ * mechanisms are kept apart everywhere else on this screen: a novel chapter never reaches the queue, and an
+ * image chapter never writes to the cache. Resolving both into one plan here is what stops that split from
+ * becoming a leak — asking only the queue left a novel entry with cached text it could never be offered the
+ * chance to delete.
+ *
+ * The two are never applied together: a manga's chapters all come from one source, so only one of the two can
+ * hold anything for it. Were that ever not true, the novel half wins, which is the same tie-break
+ * [planChapterDownloadAction] uses for a mixed chapter selection and goes to the copy that nothing else holds.
+ */
+internal sealed interface MangaDownloadPlan {
+    /** Nothing is downloaded, so there is nothing to offer and nothing to delete. */
+    data object Nothing : MangaDownloadPlan
+
+    /** Delete the image queue's downloads for the manga, exactly as it was done before novels existed. */
+    data object DeleteImagePages : MangaDownloadPlan
+
+    /** Drop the cached text of these chapters, which for a novel is all a download ever was. */
+    data class DeleteNovelContent(val chapterIds: Set<Long>) : MangaDownloadPlan
+}
+
+/**
+ * Resolves what a manga's downloads are, from the two places that can hold them.
+ *
+ * [imageDownloadCount] is the image queue's own count and [cachedNovelChapterIds] the chapters whose text is on
+ * disk, both read by the caller. Neither implies the other, and a manga that has neither is [MangaDownloadPlan.Nothing]:
+ * that is the only answer that means there is nothing to prompt about.
+ */
+internal fun planMangaDownloads(
+    imageDownloadCount: Int,
+    cachedNovelChapterIds: Set<Long>,
+): MangaDownloadPlan = when {
+    cachedNovelChapterIds.isNotEmpty() -> MangaDownloadPlan.DeleteNovelContent(cachedNovelChapterIds)
+    imageDownloadCount > 0 -> MangaDownloadPlan.DeleteImagePages
+    else -> MangaDownloadPlan.Nothing
+}
 
 /**
  * What a chapter download action actually has to do.

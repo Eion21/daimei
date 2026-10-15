@@ -17,6 +17,8 @@ import tachiyomi.domain.chapter.model.ChapterRemoteUpdate
 import tachiyomi.domain.chapter.model.ChapterSummary
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.novel.repository.ChapterContentRepository
+import tachiyomi.domain.novel.repository.ReadingProgressRepository
 import kotlin.time.Instant
 
 @Inject
@@ -24,6 +26,8 @@ import kotlin.time.Instant
 @ContributesBinding(AppScope::class)
 class ChapterRepositoryImpl(
     private val database: Database,
+    private val chapterContentRepository: ChapterContentRepository,
+    private val readingProgressRepository: ReadingProgressRepository,
 ) : ChapterRepository {
 
     override suspend fun update(chapterUpdate: ChapterUpdate) {
@@ -42,6 +46,7 @@ class ChapterRepositoryImpl(
         return database.transactionWithResult {
             if (removedIds.isNotEmpty()) {
                 database.chapterQueries.removeChaptersWithIds(removedIds)
+                deleteNovelStateOf(removedIds)
             }
             val existing = added.map { it.mangaId }
                 .distinct()
@@ -86,6 +91,28 @@ class ChapterRepositoryImpl(
                 )
             }
             stored
+        }
+    }
+
+    /**
+     * Takes the novel state of chapters that no longer exist with them.
+     *
+     * This is the one place a chapter row is ever deleted, so it is the one place the rows and the file that
+     * pointed at it have to go. `chapter_content` and `reading_progress` both declare
+     * `FOREIGN KEY(chapter_id) REFERENCES chapter(id) ON DELETE CASCADE`, and that cascade never fires: nothing
+     * in the project runs `PRAGMA foreign_keys = ON`, which upstream leaves off on purpose because turning it on
+     * would start enforcing every foreign key in the app at once. Without this, a chapter the source withdrew
+     * leaves its text in the cache directory and its saved position in the database for good.
+     *
+     * Through the repositories rather than raw SQL: dropping a cached content row has to drop the file behind it
+     * too, and only [ChapterContentRepository] knows where that file lives. A chapter with no novel state costs
+     * two queries that find nothing, which is the price for the overwhelming majority of removals, which are
+     * image chapters.
+     */
+    private suspend fun deleteNovelStateOf(chapterIds: List<Long>) {
+        chapterIds.forEach { chapterId ->
+            chapterContentRepository.delete(chapterId)
+            readingProgressRepository.delete(chapterId)
         }
     }
 

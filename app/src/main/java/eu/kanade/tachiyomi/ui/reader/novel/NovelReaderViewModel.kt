@@ -102,6 +102,12 @@ class NovelReaderViewModel(
                         "restored=$_position.value"
                 }
                 _content.value = loaded
+
+                // Mihon writes history when the chapter opens, not when it is finished: `loadNewChapter` there calls
+                // `updateHistory()` before it even starts the chapter, so a chapter the reader opened and backed out
+                // of is still "recently read". Writing only at the end left anything short of the last paragraph
+                // invisible on the History screen, which is what an opened-and-partly-read chapter is.
+                recordHistory(chapterId)
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to load novel chapter $chapterId" }
                 blockCount = 0
@@ -140,28 +146,38 @@ class NovelReaderViewModel(
     }
 
     /**
-     * Marks the chapter read and records the read in history. Separate from [saveProgress] on purpose.
+     * Marks the chapter read. Separate from [saveProgress] on purpose.
      *
      * In Mihon these are two different tables. `chapter.user_read` is what greys the chapter out in the library;
      * History is a separate screen backed by the `history` table, which only ever learns about a chapter through
      * [UpsertHistory]. Flipping the flag alone leaves a finished chapter invisible on that screen, which is why
-     * both are written here and nowhere else.
-     *
-     * At most one history row is written per chapter per load. [historyWrittenFor] is set before the writes rather
-     * than after them, so two emissions arriving before either write completes still produce a single row.
+     * this still calls [recordHistory] — though by the time a chapter reaches its end that row normally already
+     * exists, written when the chapter was opened.
      */
     fun markRead(chapterId: Long) {
         viewModelScope.launch {
-            if (historyWrittenFor == chapterId) return@launch
-
-            val endTime = Clock.System.now()
-            val sessionReadDuration = chapterReadStartTime?.let { (endTime - it).inWholeMilliseconds } ?: 0
-            chapterReadStartTime = null
-            historyWrittenFor = chapterId
-
             updateChapter.await(ChapterUpdate(chapterId) { read = true })
-            upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
+            recordHistory(chapterId)
         }
+    }
+
+    /**
+     * Writes the History row for [chapterId], at most once per load.
+     *
+     * Separate from [markRead] because the flag and the history row have different triggers: the flag belongs to
+     * reaching the end, while the row belongs to the chapter having been opened. Folding the two together would make
+     * the read flag depend on history timing, and [markRead] would then have to return early on the write guard and
+     * skip the flag with it.
+     */
+    private suspend fun recordHistory(chapterId: Long) {
+        if (historyWrittenFor == chapterId) return
+
+        val endTime = Clock.System.now()
+        val sessionReadDuration = chapterReadStartTime?.let { (endTime - it).inWholeMilliseconds } ?: 0
+        chapterReadStartTime = null
+        historyWrittenFor = chapterId
+
+        upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
     }
 
     /**

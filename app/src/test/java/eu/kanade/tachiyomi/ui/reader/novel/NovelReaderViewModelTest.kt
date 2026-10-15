@@ -345,6 +345,46 @@ class NovelReaderViewModelTest {
     }
 
     @Test
+    fun `opening a chapter writes history without reaching the end`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val history = FakeHistoryRepository()
+            val viewModel = viewModel(history = history)
+
+            val openedAfter = Clock.System.now()
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            // Mihon writes the History row when the chapter opens, so a chapter read half way and then backed out
+            // of still shows as recently read. Writing only at the end left it invisible on that screen.
+            val update = history.updates.single()
+            assertEquals(CHAPTER_ID, update.chapterId)
+            assertTrue(update.readAt >= openedAfter, "readAt ${update.readAt} predates the open at $openedAfter")
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `opening then finishing a chapter does not write history twice`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val history = FakeHistoryRepository()
+            val viewModel = viewModel(history = history)
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            // `history.upsert` adds to `read_duration`, so the row written on open must not be written again at the end.
+            assertEquals(1, history.updates.size)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
     fun `reaching the end again does not add the read time twice`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {

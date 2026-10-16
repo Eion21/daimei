@@ -74,6 +74,18 @@ class MatchaNovelsSourceTest {
     }
 
     @Test
+    fun `getChapters prefers the flight payload over the truncated anchors`() = runBlocking {
+        val rows = (1..500).map { TestPages.chapterRow(it.toString()) }
+        val page = TestPages.payloadNovel(novel.id, rows, escaped = true, links = 3)
+        val source = source(mapOf(novelUrl to page))
+
+        val chapters = source.getChapters(novel)
+
+        assertEquals(500, chapters.size)
+        assertEquals("${TestPages.SITE}/novela/${novel.id}/capitulo/500", chapters.last().url)
+    }
+
+    @Test
     fun `getChapterContent renders the prose paragraphs`() = runBlocking {
         val source = source(mapOf(chapterUrl to TestPages.CHAPTER))
         val chapter = Chapter(

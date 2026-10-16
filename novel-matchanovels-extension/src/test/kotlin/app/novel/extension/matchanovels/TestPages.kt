@@ -70,4 +70,27 @@ internal object TestPages {
 <header><h1>Capítulo 0</h1></header>
 <div data-mn-texto-capitulo="0"><p># Leer ahora</p></div>
 </body></html>"""
+
+    // ---- Chapter-list payload fixtures -------------------------------------------------------
+
+    /** One row of the `capitulos` array, in the measured `["<n>","<date>",false,null,null]` shape. */
+    fun chapterRow(number: String): String = """["$number","22 jul 26",false,null,null]"""
+
+    /**
+     * A novel page whose chapter rows live in the Next.js flight payload rather than in rendered
+     * anchors. With [escaped] the payload is embedded inside a JavaScript string literal and every
+     * quote is backslash-escaped — `\"capitulos\":[[\"1\",...` — which is exactly what the server
+     * serves. [links] also renders that many anchor rows for the same slug, so a test can prove
+     * which of the two paths wins.
+     */
+    fun payloadNovel(slug: String, rows: List<String>, escaped: Boolean = true, links: Int = 0): String {
+        val json = """{"lang":"es","slug":"$slug","primerCapitulo":1,"ultimoCapitulo":${rows.size},""" +
+            """"total":${rows.size},"capitulos":[${rows.joinToString(",")}]}"""
+        val embedded = if (escaped) json.replace("\"", "\\\"") else json
+        val anchors = (1..links).joinToString("") {
+            """<a data-mn-fila="1" href="/novela/$slug/capitulo/$it"><span>Capítulo $it</span></a>"""
+        }
+        return """<!doctype html><html><head><script>self.__next_f.push([1,"$embedded"])</script></head>""" +
+            """<body><h1>$slug</h1><div data-mn-lista="1">$anchors</div></body></html>"""
+    }
 }

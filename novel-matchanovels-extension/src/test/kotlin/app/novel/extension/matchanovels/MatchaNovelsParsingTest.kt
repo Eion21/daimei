@@ -90,6 +90,77 @@ class MatchaNovelsParsingTest {
         assertTrue(chapters.all { it.novelId == novel.id })
     }
 
+    private fun novel(slug: String) = Novel(sourceId = "matchanovels", id = slug, title = slug)
+
+    @Test
+    fun `a large escaped flight payload yields every chapter, not the truncated anchors`() {
+        val slug = "Shadow-Slave"
+        val rows = (1..3216).map { TestPages.chapterRow(it.toString()) }
+        val html = TestPages.payloadNovel(slug, rows, escaped = true)
+
+        val chapters = MatchaNovelsParsing.parseChapterList(html, novel(slug))
+
+        assertEquals(3216, chapters.size)
+        assertEquals("1", chapters.first().id)
+        assertEquals(1f, chapters.first().number)
+        assertEquals("Capítulo 1", chapters.first().title)
+        assertEquals("3216", chapters.last().id)
+        assertEquals(3216f, chapters.last().number)
+        assertEquals("${TestPages.SITE}/novela/$slug/capitulo/3216", chapters.last().url)
+    }
+
+    @Test
+    fun `an unescaped capitulos payload is read too`() {
+        val slug = "Some-Novela"
+        val rows = listOf(TestPages.chapterRow("1"), TestPages.chapterRow("2"))
+        val html = TestPages.payloadNovel(slug, rows, escaped = false)
+
+        val chapters = MatchaNovelsParsing.parseChapterList(html, novel(slug))
+
+        assertEquals(listOf(1f, 2f), chapters.map { it.number })
+        assertEquals("${TestPages.SITE}/novela/$slug/capitulo/2", chapters[1].url)
+    }
+
+    @Test
+    fun `a page without a payload still yields its rendered chapter links`() {
+        val chapters = MatchaNovelsParsing.parseChapterList(
+            TestPages.NOVEL,
+            novel("I-Married-The-Dragon-I-Killed"),
+        )
+
+        assertEquals(listOf(1f, 2f, 3f), chapters.map { it.number })
+    }
+
+    @Test
+    fun `a payload row whose number is not numeric is skipped`() {
+        val slug = "Some-Novela"
+        val rows = listOf(
+            TestPages.chapterRow("1"),
+            """["abc","22 jul 26",false,null,null]""",
+            TestPages.chapterRow("3"),
+        )
+        val html = TestPages.payloadNovel(slug, rows, escaped = true)
+
+        val chapters = MatchaNovelsParsing.parseChapterList(html, novel(slug))
+
+        assertEquals(listOf(1f, 3f), chapters.map { it.number })
+    }
+
+    @Test
+    fun `the payload wins over the anchors and both paths agree on a chapter`() {
+        val slug = "I-Married-The-Dragon-I-Killed"
+        val rows = (1..500).map { TestPages.chapterRow(it.toString()) }
+        val html = TestPages.payloadNovel(slug, rows, escaped = true, links = 3)
+
+        val payload = MatchaNovelsParsing.parseChapterList(html, novel(slug))
+        val links = MatchaNovelsParsing.parseChapterLinks(html, novel(slug))
+
+        // 500 payload rows beat the 3 rendered anchors, and the first chapter is the same object.
+        assertEquals(500, payload.size)
+        assertEquals(3, links.size)
+        assertEquals(links.first(), payload.first())
+    }
+
     @Test
     fun `chapter links are recognised from their href alone`() {
         assertEquals(

@@ -1018,8 +1018,13 @@ private const val MAX_PLAIN_TEXT_HEADING_LEVEL = 6
  * `ChapterContent` is a block list shaped for the reader, so flattening it is a rendering decision and nothing
  * here can be dropped quietly: an image keeps its address in markdown syntax instead of disappearing, because a
  * `.txt` cannot carry the image and a missing block is indistinguishable from a short chapter.
+ *
+ * Internal rather than private because [toChapterContent] is the other half of it and both halves are needed
+ * outside this file: this one writes the file, that one reads it back. They are declared side by side, on purpose.
+ * A parser that lived anywhere else could drift from this writer, and the drift would not show up until a
+ * chapter had been downloaded by one version and read by another.
  */
-private fun ChapterContent.toPlainText(): String = blocks.joinToString("\n\n") { block ->
+internal fun ChapterContent.toPlainText(): String = blocks.joinToString("\n\n") { block ->
     when (block) {
         is ContentBlock.Paragraph -> block.text
         // The hashes are what most text readers read back as a heading, and cost nothing to a reader that does not
@@ -1028,3 +1033,74 @@ private fun ChapterContent.toPlainText(): String = blocks.joinToString("\n\n") {
         ContentBlock.Divider -> "---"
     }
 }
+
+/**
+ * The chapter back out of the plain text [toPlainText] writes, or null when there is nothing in it.
+ *
+ * The exact inverse of the writer above and nothing more. Every token recognised here is a token that writer emits:
+ * blocks are separated by a blank line, a heading is hashes plus a space, an image is `![alt](url)` and a divider is
+ * `---`. Nothing is invented — no escaping, no front matter, no markers for a source that writes none of those —
+ * because the format is not this file's to redesign. A second dialect would leave every chapter downloaded by an
+ * earlier build unreadable, and would make the format's owner a matter of opinion rather than a single function.
+ *
+ * Null rather than an empty `ChapterContent`, because an empty chapter is not a smaller chapter: it is a chapter
+ * nobody could read, and the reader treats the two as different failures. A file that holds nothing but whitespace
+ * is the same thing.
+ *
+ * Two shapes cannot survive the trip, and neither is escaped for, because escaping them would be new syntax in a
+ * format that has files written to it already:
+ * - a paragraph whose text is exactly `---`, or which opens with hashes and a space, reads back as the block that
+ *   marker names, since a plain text file cannot say "this line is prose";
+ * - a heading deeper than [MAX_PLAIN_TEXT_HEADING_LEVEL] is clamped on the way out, because past six the hashes stop
+ *   carrying meaning and the writer deliberately stops spelling them out.
+ *
+ * Both are documented rather than worked around. Everything the writer actually produces for a chapter the app
+ * downloaded is read back identically, which is what the round trip test pins.
+ */
+internal fun String.toChapterContent(): ChapterContent? {
+    if (isBlank()) return null
+
+    val blocks = PLAIN_TEXT_BLOCK_SEPARATOR.split(trim()).mapNotNull { block ->
+        when {
+            block.isBlank() -> null
+            block == PLAIN_TEXT_DIVIDER -> ContentBlock.Divider
+            else -> block.toContentBlock()
+        }
+    }
+
+    return if (blocks.isEmpty()) null else ChapterContent(blocks)
+}
+
+/**
+ * One blank-line separated chunk of the file as the single block it was written from.
+ *
+ * The heading test counts the leading hashes instead of matching a pattern, so a heading whose text carries its own
+ * newlines still comes back whole — and a line that merely starts with a `#`, which is prose about issue numbers and
+ * very common in a novel, is left as the paragraph it always was unless a space follows the hashes.
+ */
+private fun String.toContentBlock(): ContentBlock {
+    val level = takeWhile { it == '#' }.length
+    if (level in 1..MAX_PLAIN_TEXT_HEADING_LEVEL && getOrNull(level) == ' ') {
+        return ContentBlock.Heading(text = substring(level + 1), level = level)
+    }
+
+    // Greedy on both halves, so an alt or a url that contains `](` is read back the way it was written: the split
+    // happens at the last `](` in the line, which is the one the writer put there.
+    val image = PLAIN_TEXT_IMAGE.matchEntire(this)
+    if (image != null) {
+        // An empty alt reads back as none rather than as an empty string: the writer spells both the same way, and
+        // "no alt text" is the state the reader has an actual rendering for.
+        return ContentBlock.Image(url = image.groupValues[2], alt = image.groupValues[1].ifEmpty { null })
+    }
+
+    return ContentBlock.Paragraph(this)
+}
+
+/** What [toPlainText] puts between two blocks, and what [toChapterContent] splits on. */
+private val PLAIN_TEXT_BLOCK_SEPARATOR = Regex("""\n[ \t]*\n""")
+
+/** What [toPlainText] writes for [ContentBlock.Divider], and what it reads back as one. */
+private const val PLAIN_TEXT_DIVIDER = "---"
+
+/** What [toPlainText] writes for a [ContentBlock.Image], and what it reads back as one. */
+private val PLAIN_TEXT_IMAGE = Regex("""!\[(.*)]\((.*)\)""", RegexOption.DOT_MATCHES_ALL)

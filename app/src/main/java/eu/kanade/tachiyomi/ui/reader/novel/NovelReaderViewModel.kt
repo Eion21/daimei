@@ -9,20 +9,24 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import eu.kanade.tachiyomi.data.download.DownloadProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.history.model.HistoryUpdate
+import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.novel.interactor.GetChapterContent
 import tachiyomi.domain.novel.interactor.GetReadingProgress
 import tachiyomi.domain.novel.interactor.SaveReadingProgress
 import tachiyomi.domain.novel.repository.ReadingProgress
+import tachiyomi.domain.source.service.SourceManager
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -41,12 +45,20 @@ data class NovelChapterError(val reason: String?)
  *
  * Owns no Android view: the host composable collects this and hands it to
  * [app.novel.reader.compose.NovelReaderScreen].
+ *
+ * It is also where the order a novel chapter is resolved in is decided, because that order spans three stores and
+ * only one class is allowed to know all of them: the downloaded file ([DownloadProvider]), the content cache and the
+ * source ([GetChapterContent], in `:domain`). See [resolveContent].
  */
 @Inject
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class NovelReaderViewModel(
     private val getChapterContent: GetChapterContent,
+    private val downloadProvider: DownloadProvider,
+    private val getChapter: GetChapter,
+    private val getManga: GetManga,
+    private val sourceManager: SourceManager,
     private val getReadingProgress: GetReadingProgress,
     private val saveReadingProgress: SaveReadingProgress,
     private val updateChapter: UpdateChapter,
@@ -117,7 +129,7 @@ class NovelReaderViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val loaded = getChapterContent.await(chapterId)
+                val loaded = resolveContent(chapterId)
                 if (loaded == null || loaded.blocks.isEmpty()) {
                     logcat(LogPriority.WARN) {
                         val blocks = loaded?.blocks?.size
@@ -170,6 +182,50 @@ class NovelReaderViewModel(
                 _isLoading.value = false
             }
         }
+    }
+
+    /**
+     * The content of [chapterId], asked of the downloaded file first, then the cache, then the source.
+     *
+     * The order is the whole of this fix, so it is written out rather than left to the shape of two collaborators:
+     *
+     * 1. **The downloaded file.** The user downloaded it. It is a file on disk that the downloader wrote and the
+     *    index counts as a finished chapter, and the badge next to the chapter has been promising it ever since.
+     *    Before this existed it was never opened — `Downloader` wrote it, `DownloadCache` indexed it, and
+     *    `GetChapterContent` read `cache/` and then the network, so the `.txt` took part in nothing. A downloaded
+     *    chapter was unreadable with the server down while its whole text sat next to it, and because the read
+     *    chain fails honestly the only thing the user saw was what looked like an outage.
+     * 2. **The content cache.** Still needed, and still first among what is left: a chapter read on a train and
+     *    never downloaded has no file, and the cache is what answers for it. It also keeps a downloaded chapter
+     *    cheap to open, because the file is already there and the cache is only consulted when it is not.
+     * 3. **The source.** Last, as it always was: the only store that can answer for a chapter nobody has read and
+     *    nobody has downloaded.
+     *
+     * **The file beats the cache, and that is deliberate.** Where they disagree, the file is what the user has on
+     * disk and what the badge promised; the cache is a copy under `cache/`, which clearing the app cache removes
+     * without deleting a single download. A cache that disagrees is the stale one whichever was written more
+     * recently, because the downloader renders the file from the cache at download time and so the two start out
+     * identical — the file only becomes the fresh one when something changed after that.
+     *
+     * `GetChapterContent` is deliberately not told about any of this. It stays the cache and the source, in
+     * `:domain`, and `:domain` stays free of what a downloads folder is; the step in front of it is here, in `:app`,
+     * where [DownloadProvider] and that concept already live.
+     */
+    private suspend fun resolveContent(chapterId: Long): ChapterContent? =
+        downloadedContent(chapterId) ?: getChapterContent.await(chapterId)
+
+    /**
+     * The chapter's text out of its downloaded file, or null when there is none to read.
+     *
+     * Every miss here is silent on purpose. Nothing about a chapter that was never downloaded is wrong, and a
+     * chapter whose file vanished is a chapter that has to be answered by the cache or the source — so this only
+     * ever *adds* an answer, and never turns one into a failure.
+     */
+    private suspend fun downloadedContent(chapterId: Long): ChapterContent? {
+        val chapter = getChapter.await(chapterId) ?: return null
+        val manga = getManga.await(chapter.mangaId) ?: return null
+        val source = sourceManager.get(manga.source) ?: return null
+        return downloadProvider.findDownloadedNovelContent(chapter, manga, source)
     }
 
     /**

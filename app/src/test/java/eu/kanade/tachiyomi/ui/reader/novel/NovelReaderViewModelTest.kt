@@ -4,6 +4,9 @@ import app.novel.reader.core.ReadingPosition
 import app.novel.runtime.SourceRegistry
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.ContentBlock
+import eu.kanade.tachiyomi.data.download.DownloadProvider
+import io.mockk.coEvery
+import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,6 +25,8 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterRemoteUpdate
@@ -34,6 +39,8 @@ import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.history.model.HistoryWithRelations
 import tachiyomi.domain.history.repository.HistoryRepository
 import tachiyomi.domain.library.model.LibraryManga
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaRemoteUpdate
 import tachiyomi.domain.manga.model.MangaUpdate
@@ -45,6 +52,7 @@ import tachiyomi.domain.novel.interactor.SaveReadingProgress
 import tachiyomi.domain.novel.repository.ChapterContentRepository
 import tachiyomi.domain.novel.repository.ReadingProgress
 import tachiyomi.domain.novel.repository.ReadingProgressRepository
+import tachiyomi.domain.storage.service.StorageManager
 import kotlin.time.Clock
 
 /**
@@ -223,6 +231,19 @@ class NovelReaderViewModelTest {
     ): NovelReaderViewModel {
         return NovelReaderViewModel(
             getChapterContent = GetChapterContent(content, chapters, UnusedMangaRepository(), SourceRegistry()),
+            // The read order asks for the downloaded file before the cache. These chapters were read and never
+            // downloaded, so the file step has to answer nothing — and it is pointed at a storage manager with no
+            // downloads directory rather than at a mock that would answer anything, so the cache and the source keep
+            // being what these tests are actually about. The situation a file does answer is
+            // `DownloadedNovelChapterReadTest`, which drives the two halves together.
+            downloadProvider = DownloadProvider(
+                mockk(relaxed = true),
+                mockk<StorageManager>().also { coEvery { it.getDownloadsDirectory() } returns null },
+                LibraryPreferences(InMemoryPreferenceStore()),
+            ),
+            getChapter = GetChapter(chapters),
+            getManga = GetManga(UnusedMangaRepository()),
+            sourceManager = mockk(relaxed = true),
             getReadingProgress = GetReadingProgress(progress),
             saveReadingProgress = SaveReadingProgress(progress),
             updateChapter = UpdateChapter(chapters),

@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.download
 
 import android.content.ContentResolver
 import android.content.Context
+import app.novel.source.api.ChapterContent
 import com.hippo.unifile.UniFile
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -123,6 +124,65 @@ class DownloadProvider(
         getValidChapterDirNames(chapterName, chapterScanlator, chapterUrl).asSequence()
             .mapNotNull { mangaDir?.findFile(it) }
             .firstOrNull()
+    }
+
+    /**
+     * The text of a downloaded novel chapter, read back out of the file the downloader wrote, or null when there is
+     * no such file or nothing readable in it.
+     *
+     * This is the other half of [Downloader.downloadNovelChapter]: that writes `<chapterDirName>.txt` into the
+     * downloads tree, this reads it. Until it existed the file was decoration — `DownloadCache` indexed it, so the
+     * badge said "downloaded", and no reader ever opened it — and a chapter could only be read with the network up
+     * even though its whole text was sitting on disk. It mattered most exactly when the cache was gone, because
+     * `ChapterContent` lives under `cache/` and clearing the app cache is a thing a user does without touching a
+     * single download.
+     *
+     * It is here, in `:app`, rather than in the read chain `:domain` owns. `GetChapterContent` deliberately knows
+     * nothing about folders, and `:domain` is not learning what a downloads directory is: the tree is a Mihon
+     * concept, [DownloadProvider] is where that concept already lives, and the lookup belongs beside it rather than
+     * contaminating a module that has to stay free of it. `:domain` still answers the cache and the source, so the
+     * whole order — file, then cache, then source — is assembled by the one caller allowed to know all three.
+     *
+     * A file that cannot be read, or that holds nothing this format can turn back into blocks, is a miss and not a
+     * failure: the caller goes on to the cache and the source, which is strictly better than refusing to open a
+     * chapter over a truncated download.
+     *
+     * @param chapter the chapter to read.
+     * @param manga the manga the chapter belongs to, whose title names its folder.
+     * @param source the source the chapter was downloaded from, which names the source folder.
+     */
+    internal suspend fun findDownloadedNovelContent(
+        chapter: Chapter,
+        manga: Manga,
+        source: Source,
+    ): ChapterContent? = withContext(Dispatchers.IO) {
+        // The one discriminator, asked once: the same rule that decides where the chapter is read and the downloader
+        // writes it. A manga chapter is a page folder or a CBZ and is never prose, so it never comes through here.
+        if (!ChapterOpener.shouldOpenNovelReader(chapter)) return@withContext null
+
+        val mangaDir = findMangaDir(manga.title, source) ?: return@withContext null
+
+        // Only the text names, and only the ones that are files. The bare chapter name is in the list too, and for a
+        // novel chapter it is the name of nothing — but a stale `.cbz` beside the `.txt` would answer first if the
+        // list were walked whole, and an unreadable CBZ is not a chapter of prose.
+        val novelSuffix = ".${Downloader.NOVEL_CHAPTER_EXTENSION}"
+        val file = getValidChapterDirNames(
+            chapter.name,
+            chapter.scanlator,
+            chapter.url,
+            isNovelChapter = true,
+        )
+            .filter { it.endsWith(novelSuffix) }
+            .firstNotNullOfOrNull { name -> mangaDir.findFile(name)?.takeIf { it.isFile } }
+            ?: return@withContext null
+
+        runCatching { file.openInputStream().use { it.readBytes().toString(Charsets.UTF_8).toChapterContent() } }
+            .onFailure {
+                logcat(LogPriority.ERROR, it) {
+                    "[novel] The downloaded file for chapter ${chapter.id} could not be read as text"
+                }
+            }
+            .getOrNull()
     }
 
     /**

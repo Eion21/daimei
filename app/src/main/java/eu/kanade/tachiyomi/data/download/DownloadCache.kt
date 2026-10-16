@@ -9,6 +9,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.ui.reader.novel.ChapterOpener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -142,8 +143,14 @@ class DownloadCache(
 
         return chapters
             .filter { chapter ->
-                provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
-                    .any { it in mangaDir.chapterDirs }
+                provider.getValidChapterDirNames(
+                    chapter.name,
+                    chapter.scanlator,
+                    chapter.url,
+                    // The index holds bare names, so the plain name matches either way; passing this keeps the
+                    // lookup and the writer agreeing on what a novel's file is called.
+                    isNovelChapter = ChapterOpener.shouldOpenNovelReader(chapter),
+                ).any { it in mangaDir.chapterDirs }
             }
             .mapTo(HashSet()) { it.id }
     }
@@ -387,7 +394,7 @@ class DownloadCache(
             // Try to wait until extensions and sources have loaded
             var sources = emptyList<Source>()
             withTimeoutOrNull(30.seconds) {
-                sources = getSources()
+                sources = sourceManager.sourcesForDownloadIndex()
             }
 
             val sourceMap = sources.associate { provider.getSourceDirName(it).lowercase() to it.id }
@@ -437,10 +444,6 @@ class DownloadCache(
 
         // Mainly to notify the indexing notifier UI
         notifyChanges()
-    }
-
-    private suspend fun getSources(): List<Source> {
-        return sourceManager.getOnlineSources() + sourceManager.getStubSources()
     }
 
     private fun notifyChanges() {
@@ -545,3 +548,16 @@ private object UniFileAsStringSerializer : KSerializer<UniFile?> {
         }
     }
 }
+
+/**
+ * The sources a download folder can be resolved against.
+ *
+ * Kept as a standalone rule rather than inlined so a test can pin *which* list it reads. The list used to be
+ * `getOnlineSources() + getStubSources()`, and `getOnlineSources()` is typed `List<HttpSource>` and filters with
+ * `filterIsInstance<HttpSource>()`. A `NovelSourceAdapter` is a plain `Source` and cannot survive that filter, so a
+ * novel source's folder mapped to no id, the index held no chapters for it, and every novel chapter read as "not
+ * downloaded" however much text file sat in the folder.
+ *
+ * Stubs stay in the list because they only ever live in the manager's stub map, never in the registered one.
+ */
+internal suspend fun SourceManager.sourcesForDownloadIndex(): List<Source> = getAll() + getStubSources()

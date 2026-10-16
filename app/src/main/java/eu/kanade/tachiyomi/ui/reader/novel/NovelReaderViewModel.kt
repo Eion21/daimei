@@ -106,10 +106,11 @@ class NovelReaderViewModel(
      * while a throw here would take the whole screen down for a recoverable miss. Clearing the error first is what
      * makes this one entry point serve as the retry too — the reader goes back to its loading state on the same tap.
      *
-     * A chapter with no content returns before any of the state below is touched, because all of it describes a
-     * chapter that is in hand. History in particular has to mean something the reader reached, and a chapter whose
-     * text never loaded was not reached; writing it would put an unread chapter on the History screen, which is the
-     * mirror image of the bug this same rule fixed earlier — history that claims a read nobody did.
+     * A chapter with no content — no answer at all, or an answer with nothing in it — returns before any of the
+     * state below is touched, because all of it describes a chapter that is in hand. History in particular has to
+     * mean something the reader reached, and a chapter whose text never loaded was not reached; writing it would put
+     * an unread chapter on the History screen, which is the mirror image of the bug this same rule fixed earlier —
+     * history that claims a read nobody did.
      */
     fun load(chapterId: Long) {
         _error.value = null
@@ -117,12 +118,26 @@ class NovelReaderViewModel(
             _isLoading.value = true
             try {
                 val loaded = getChapterContent.await(chapterId)
-                if (loaded == null) {
-                    logcat(LogPriority.WARN) { "No novel content available for chapter $chapterId" }
+                if (loaded == null || loaded.blocks.isEmpty()) {
+                    logcat(LogPriority.WARN) {
+                        val blocks = loaded?.blocks?.size
+                        if (blocks == null) {
+                            "No novel content available for chapter $chapterId"
+                        } else {
+                            "Novel chapter $chapterId resolved to an empty chapter ($blocks blocks)"
+                        }
+                    }
                     // Published as a failure rather than left as a null content, which is the same value a load
                     // still in flight publishes — the reader would spin over a chapter it can never show. The return
                     // is what keeps a chapter nobody could read out of History; `finally` still ends the load, so
                     // this is the error state rather than a spinner over it.
+                    //
+                    // Zero blocks lands here too, and deliberately: `ChapterBody` draws one item per block, so a
+                    // chapter with none is an empty LazyColumn — a black page that survives every later attempt
+                    // because the content cache answers with it. Neither the source nor the cache can produce one
+                    // any more, but a store written before either of them was fixed still can, and a reader stuck
+                    // on a blank page has no way back. It returns before the assignment below, so an empty chapter
+                    // is never published as something to read.
                     _error.value = NovelChapterError(reason = null)
                     return@launch
                 }

@@ -341,6 +341,42 @@ class GetChapterContentTest {
     }
 
     @Test
+    fun `a source that answers with no blocks is a miss and is never cached`() = runTest {
+        RecordingSource(demoInfo, ChapterContent(blocks = emptyList())).also(registry::register)
+        val repository = FakeContentRepository()
+        val chapter = chapterWithMemo(CHAPTER_ID, MANGA_ID, memo())
+
+        // The device held `{"blocks":[]}` for three chapters, all written at the same moment, offline. There is
+        // no readable content in any of them, and the cache answered before the source was ever asked again —
+        // which is what made one cut connection permanently unreadable. An empty chapter is a failure, not a
+        // chapter: nothing to read means nothing worth storing.
+        assertNull(interactor(repository, mapOf(CHAPTER_ID to chapter)).await(CHAPTER_ID))
+        assertTrue(repository.saved.isEmpty(), "an empty chapter was written to the content cache")
+    }
+
+    @Test
+    fun `an empty chapter already in the cache is evicted and fetched again`() = runTest {
+        val source = RecordingSource(demoInfo, content).also(registry::register)
+        val repository = FakeContentRepository()
+        val chapter = chapterWithMemo(CHAPTER_ID, MANGA_ID, memo())
+
+        // The entry a device already holds, written before `fetch` learned to refuse an empty answer. Answering
+        // from it would leave the chapter unreadable forever, because the cache is consulted before the source on
+        // every read and no retry could ever get past it. Evicting it is what lets the fix reach a chapter that
+        // was already poisoned instead of only chapters that fail from here on.
+        repository.cached[CHAPTER_ID] = ChapterContent(blocks = emptyList())
+
+        val result = interactor(repository, mapOf(CHAPTER_ID to chapter)).await(CHAPTER_ID)
+
+        assertNotNull(result, "the poisoned entry was trusted instead of being refetched")
+        assertEquals(content, result)
+        assertTrue(CHAPTER_ID !in repository.cached || repository.cached[CHAPTER_ID] == content) {
+            "the empty entry was left behind"
+        }
+        assertEquals(listOf(CHAPTER_ID to content), repository.saved)
+    }
+
+    @Test
     fun `a chapter that is not a novel never reaches a novel source`() = runTest {
         val source = RecordingSource(demoInfo, content).also(registry::register)
         val repository = FakeContentRepository()

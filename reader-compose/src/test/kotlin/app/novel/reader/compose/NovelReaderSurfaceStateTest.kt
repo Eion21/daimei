@@ -45,4 +45,15 @@ class NovelReaderSurfaceStateTest {
             readerSurfaceStateFor(content = content, hasError = true),
         )
     }
+
+    @Test
+    fun `a chapter with no blocks is the error state and not a blank page`() {
+        // `ChapterBody` draws one item per block, so a chapter with none is an empty LazyColumn: a black page
+        // that looks like the reader is broken. Zero blocks is the absence of a chapter, and the surface says so
+        // even when nobody upstream has published a failure yet.
+        assertEquals(
+            ReaderSurfaceState.Error,
+            readerSurfaceStateFor(content = ChapterContent(blocks = emptyList()), hasError = false),
+        )
+    }
 }

@@ -28,7 +28,8 @@ import app.novel.source.api.Chapter as NovelChapter
  * live in `:domain` at all.
  *
  * Every failure is a null plus a log naming the step that failed. A chapter that cannot be fetched is a recoverable
- * miss, and throwing here would take the reader down with it.
+ * miss, and throwing here would take the reader down with it. A chapter that comes back with no content at all is
+ * treated as one of those failures and is never written to the content cache.
  */
 @Inject
 class GetChapterContent(
@@ -38,7 +39,17 @@ class GetChapterContent(
     private val sourceRegistry: SourceRegistry,
 ) {
 
-    suspend fun await(chapterId: Long): ChapterContent? = repository.get(chapterId) ?: fetch(chapterId)
+    suspend fun await(chapterId: Long): ChapterContent? {
+        // An empty cached answer is not content, it is a failed fetch that was stored before `fetch` learned to
+        // refuse one. Answering from it would make the chapter permanently unreadable, with no retry able to help,
+        // because the cache would be asked before the source every single time. Those entries are already on real
+        // devices, so evicting them here is the only way the fix reaches a chapter that was already poisoned.
+        val cached = repository.get(chapterId)
+        if (cached != null && cached.blocks.isNotEmpty()) return cached
+        if (cached != null) repository.delete(chapterId)
+
+        return fetch(chapterId)
+    }
 
     private suspend fun fetch(chapterId: Long): ChapterContent? {
         val chapter = chapterRepository.getChapterById(chapterId)
@@ -71,6 +82,15 @@ class GetChapterContent(
                 "[novel] Source ${source.info.id} threw while fetching chapter $chapterId"
             }
             return null
+        }
+
+        // Nothing to read is not a chapter worth keeping. An empty chapter stored here answers from the content
+        // cache before the source is ever asked again, so one fetch that failed while offline — or a source that
+        // returned a page nobody could parse — would poison the chapter permanently: no later attempt could reach
+        // the source to replace it. Correcting the source alone would not be enough, because any other source can
+        // still answer empty, and this layer is the one that decides what is stored.
+        if (content.blocks.isEmpty()) {
+            return miss(chapterId, "the source answered it with no readable content")
         }
 
         repository.save(chapterId, content)

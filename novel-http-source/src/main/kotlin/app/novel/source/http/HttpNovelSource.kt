@@ -97,11 +97,34 @@ class HttpNovelSource(
         }
     }
 
+    /**
+     * The one chapter path that reports a failure instead of an empty chapter.
+     *
+     * Every other call here degrades to an empty result on purpose: a listing that cannot be read is a listing
+     * with nothing in it, and a detail page that cannot be read is a novel the caller already holds. A chapter has
+     * no such fallback — there is nothing to degrade to — so the only honest report of a failed fetch is to throw.
+     * `ChapterContent` is non-null in the contract, and an empty `blocks` list reads as "this chapter has no text"
+     * rather than "this chapter could not be fetched", which is how a single cut connection became a permanently
+     * unreadable chapter: the empty answer was cached, and the cache answered before the source was ever asked
+     * again. `GetChapterContent` catches this and resolves to a miss.
+     *
+     * @throws IOException when the chapter has no page to read, or its page could not be read.
+     * @throws IllegalStateException when the page arrived but held nothing readable. A document with no blocks in
+     *   it is a page this source does not understand, which is a different fact from a chapter whose text is empty
+     *   and is reported as a different exception for exactly that reason.
+     */
     override suspend fun getChapterContent(chapter: Chapter): ChapterContent {
-        val url = chapter.url?.let(::absolute) ?: return ChapterContent(emptyList())
-        val html = get(url) ?: return ChapterContent(emptyList())
+        val url = chapter.url?.let(::absolute)
+            ?: throw IOException("Chapter ${chapter.id} carries no url, so its page cannot be read")
+        val html = get(url)
+            ?: throw IOException("The chapter page at $url could not be read")
 
-        return parseChapterContent(html, chapter)
+        val content = parseChapterContent(html, chapter)
+        check(content.blocks.isNotEmpty()) {
+            "The chapter page at $url parsed to no readable blocks, so it is not a chapter"
+        }
+
+        return content
     }
 
     /**
@@ -112,8 +135,11 @@ class HttpNovelSource(
      * blocking. [Dispatchers.IO] is what keeps this off the main thread, and unlike the callback
      * based alternative it still cancels with the calling scope.
      *
-     * A transport failure reads as "no document" rather than an exception: an unreachable fixture
-     * server should leave the reader empty, not crash it. There is no retry or backoff here on
+     * A transport failure reads as "no document" rather than an exception, because the browse
+     * paths have nothing better to do with a page they could not read: a listing with no novels in
+     * it is still a listing, and the reader for one is empty either way. [getChapterContent] is the
+     * exception — it turns that null into a throw, because there the difference between "no
+     * chapters" and "no connection" is the whole answer. There is no retry or backoff here on
      * purpose, per the plan.
      */
     private suspend fun get(url: HttpUrl): String? = withContext(Dispatchers.IO) {
@@ -134,10 +160,9 @@ class HttpNovelSource(
                 }
             }
         } catch (e: IOException) {
-            // `NovelSource` has no failure channel, so a fetch that never reached the server comes back as
-            // an empty result and is indistinguishable from a genuinely empty one. Without this line the
-            // usual cause — the fixture server not running, or on another port — looks like a bug in the
-            // parser rather than a connection that never happened.
+            // The null this returns is what a chapter page turns into a thrown failure, so without this line the
+            // usual cause — the fixture server not running, or on another port — would reach the reader as a
+            // message about the chapter rather than about a connection that never happened.
             // The throwable goes in the message rather than as an argument: `logcat`'s overload taking one
             // lives in `core:common`, which is an Android module and would cost this one its purity.
             logcat(LogPriority.ERROR) { "Could not reach $url: ${e.javaClass.simpleName}: ${e.message}" }

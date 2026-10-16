@@ -132,6 +132,11 @@ fun parseChapterList(html: String, novel: Novel): List<Chapter> {
  * block sitting inside the article cannot become a paragraph.
  *
  * Whitespace-only paragraphs are dropped: a `&nbsp;` spacer is not prose.
+ *
+ * A document it cannot read anything out of yields zero blocks rather than throwing, like every other function
+ * here. That is a statement about the document, not about the chapter: zero blocks means this page was not one,
+ * and [HttpNovelSource.getChapterContent] is the layer that turns that into a reported failure instead of a
+ * chapter nobody can read.
  */
 fun parseChapterContent(html: String, chapter: Chapter): ChapterContent {
     val content = Jsoup.parse(html).selectFirst(".chapter-content") ?: return ChapterContent(emptyList())

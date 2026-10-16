@@ -81,7 +81,7 @@ private const val ERROR_REASON_ALPHA = 0.7f
  */
 internal sealed interface ReaderSurfaceState {
 
-    /** A chapter to read, and the chapter it is. */
+    /** A chapter to read, and the chapter it is. Never one with no blocks: there is nothing there to read. */
     data class Content(val content: ChapterContent) : ReaderSurfaceState
 
     /** A chapter that could not be opened. */
@@ -96,10 +96,17 @@ internal sealed interface ReaderSurfaceState {
  *
  * Content outranks the failure: content is what the reader can actually use, so an error that outlived it must never
  * cover the chapter.
+ *
+ * A chapter with no blocks is not content, though it is not null either. `ChapterBody` draws one item per block, so
+ * publishing one renders an empty `LazyColumn` — the black page a reader cannot tell apart from a crash, and one
+ * that never resolves because the store that answered with it keeps answering with it. It belongs in the error
+ * state, which is what a chapter nobody can read is; deciding it here rather than upstream is what makes the
+ * guarantee hold for every caller instead of depending on each one to have checked.
  */
 internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean): ReaderSurfaceState = when {
+    content == null && hasError -> ReaderSurfaceState.Error
+    content != null && content.blocks.isEmpty() -> ReaderSurfaceState.Error
     content != null -> ReaderSurfaceState.Content(content)
-    hasError -> ReaderSurfaceState.Error
     else -> ReaderSurfaceState.Loading
 }
 
@@ -114,8 +121,8 @@ internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean):
  * hands over the message, the reason when there is one and the label for the action.
  *
  * @param initialPosition where to start reading, already expressed as a logical position.
- * @param errorMessage what to tell the reader when the chapter could not be opened. Non-null is what makes this the
- *   error state rather than the loading one.
+ * @param errorMessage what to tell the reader when the chapter could not be opened. Non-null is what makes a null
+ *   content the error state rather than the loading one; a chapter with no blocks is the error state either way.
  * @param errorReason why it failed, when the caller knows. Null shows the message alone.
  * @param retryLabel the action's label.
  * @param onRetry asked for when the reader taps retry. Expected to load the same chapter again, which is what
@@ -140,6 +147,16 @@ fun NovelReaderScreen(
     val latestOnProgress by rememberUpdatedState(onProgress)
     val effectiveSettings = settings.normalized()
 
+    // Decided once and bound, so the content branch gets the chapter itself rather than a null it has to
+    // re-assert, and so the effects below can ask the same question the drawing does.
+    val surface = readerSurfaceStateFor(initialContent, hasError = errorMessage != null)
+
+    // The chapter there is to read, or null when there is nothing to read. The effects below work from this rather
+    // than from `initialContent`, because an empty `LazyColumn` still reports a position: with no blocks to measure,
+    // `progressSample` answers block 0, which the caller would then persist over whatever spot the reader had
+    // actually reached. A chapter nobody can read must not move anyone's place.
+    val readable = (surface as? ReaderSurfaceState.Content)?.content
+
     // The logical position currently on screen. Tracked so a font or theme change can re-assert it: after a
     // reflow the list keeps its pixel offset, which now points at different text.
     var currentPosition by remember { mutableStateOf(initialPosition.normalized()) }
@@ -149,7 +166,7 @@ fun NovelReaderScreen(
     var positionRestored by remember { mutableStateOf(false) }
 
     LaunchedEffect(listState, initialContent) {
-        val content = initialContent ?: return@LaunchedEffect
+        val content = readable ?: return@LaunchedEffect
         val target = initialPosition.normalized()
         listState.restoreReadingPosition(target, content.blocks.lastIndex)
         currentPosition = target
@@ -160,17 +177,17 @@ fun NovelReaderScreen(
     // different text. Re-applying the logical position is what keeps the reader on the same paragraph.
     var settingsChangeCount = remember { 0 }
     LaunchedEffect(listState, effectiveSettings) {
-        val content = initialContent ?: return@LaunchedEffect
+        val content = readable ?: return@LaunchedEffect
         // The first emission is the initial composition, which the restore above already handled.
         if (settingsChangeCount++ == 0) return@LaunchedEffect
         listState.restoreReadingPosition(currentPosition, content.blocks.lastIndex)
     }
 
     LaunchedEffect(listState, initialContent, positionRestored) {
-        val content = initialContent ?: return@LaunchedEffect
+        val content = readable ?: return@LaunchedEffect
         if (!positionRestored) return@LaunchedEffect
         val lastIndex = content.blocks.lastIndex
-        val endOfContent = if (lastIndex < 0) ReadingPosition.START else ReadingPosition(lastIndex, 1f)
+        val endOfContent = ReadingPosition(lastIndex, 1f)
 
         snapshotFlow { listState.progressSample(lastIndex) }
             .distinctUntilChanged()
@@ -181,8 +198,6 @@ fun NovelReaderScreen(
             }
     }
 
-    // Decided once and bound, so the content branch gets the chapter itself rather than a null it has to re-assert.
-    val surface = readerSurfaceStateFor(initialContent, hasError = errorMessage != null)
     when (surface) {
         is ReaderSurfaceState.Content -> ChapterBody(
             content = surface.content,
@@ -312,16 +327,21 @@ private fun ReaderErrorState(
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = message,
-                color = colors.text,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-            )
+            // Drawn only when there is one. An empty line where the message should be reads as a string that
+            // failed to load — the same kind of lie this state exists to stop — and this surface can
+            // reach the error state on a chapter with no blocks alone, before the caller has published
+            // anything to say.
+            if (message.isNotBlank()) {
+                Text(
+                    text = message,
+                    color = colors.text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
-            // Drawn only when there is one. `GetChapterContent` reports most misses without a reason to name, and an
-            // empty line under the message would read as a string that failed to load — the same kind of lie this
-            // state exists to stop.
+            // The diagnostic detail under the message, and the only thing this state says that the message does not.
+            // `GetChapterContent` names most misses in its log alone, so it is usually absent by design.
             if (reason != null) {
                 Text(
                     text = reason,

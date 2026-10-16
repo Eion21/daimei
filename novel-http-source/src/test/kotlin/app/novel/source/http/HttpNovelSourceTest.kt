@@ -9,8 +9,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -129,14 +131,44 @@ class HttpNovelSourceTest {
     }
 
     @Test
-    fun `a chapter with no url yields empty content without a request`() = runBlocking {
+    fun `a chapter with no url fails without a request instead of reading as an empty chapter`() = runBlocking {
+        // There is no page to read, so there is no chapter to return. Returning `{"blocks":[]}` here is what
+        // wrote the poisoned cache on the device.
         val (source, wire) = source()
         wire.requestedUrls.clear()
 
-        val content = source.getChapterContent(Chapter(SOURCE_ID, "torre-de-cristal", "x", "Sin url", url = null))
-
-        assertEquals(emptyList(), content.blocks)
+        assertFailsWith<IOException> {
+            source.getChapterContent(Chapter(SOURCE_ID, "torre-de-cristal", "x", "Sin url", url = null))
+        }
         assertEquals(emptyList(), wire.requestedUrls)
+    }
+
+    @Test
+    fun `a chapter page that is not served fails instead of reading as an empty chapter`() = runBlocking<Unit> {
+        val (source, _) = source(excluding = setOf("/chapter/torre-de-cristal-1.html"))
+        val novel = source.popular(1).novels.first()
+        val chapter = source.getChapters(novel)[1]
+
+        // The exact device failure: the chapter was opened offline, the source could not be reached, and an
+        // `{"blocks":[]}` was stored as if it were the chapter. Answering from that cache forever afterwards is
+        // what turned one cut connection into a permanently unreadable chapter.
+        assertFailsWith<IOException> { source.getChapterContent(chapter) }
+    }
+
+    @Test
+    fun `a fetch that never reaches the server fails instead of reading as an empty chapter`() = runBlocking<Unit> {
+        val source = offlineSource()
+
+        assertFailsWith<IOException> { source.getChapterContent(chapterOne()) }
+    }
+
+    @Test
+    fun `a chapter page that parses to nothing fails instead of reading as an empty chapter`() = runBlocking<Unit> {
+        // The document arrived and held no readable block. That is a page the parser could not read, not a
+        // chapter whose text is empty, and reporting it as the second is how a zero-block chapter gets written.
+        val (source, _) = source(overrides = mapOf(CHAPTER_PATH to PAGE_WITHOUT_BLOCKS))
+
+        assertFailsWith<IllegalStateException> { source.getChapterContent(chapterOne()) }
     }
 
     @Test
@@ -147,15 +179,37 @@ class HttpNovelSourceTest {
         assertTrue(source.info.name.isNotBlank())
     }
 
-    private fun source(excluding: Set<String> = emptySet()): Pair<HttpNovelSource, RecordingInterceptor> {
+    /**
+     * [overrides] replaces what a path answers with, so a test can serve a document shape the fixture set does
+     * not carry without adding a file for every case.
+     */
+    private fun source(
+        excluding: Set<String> = emptySet(),
+        overrides: Map<String, String> = emptyMap(),
+    ): Pair<HttpNovelSource, RecordingInterceptor> {
         val interceptor = RecordingInterceptor(
-            ROUTES.filterKeys { it !in excluding }.mapValues { (_, name) -> fixture(name) },
+            ROUTES.filterKeys { it !in excluding }.mapValues { (_, name) -> fixture(name) } + overrides,
         )
         return HttpNovelSource(
             baseUrl = BASE_URL,
             httpClient = OkHttpClient.Builder().addInterceptor(interceptor).build(),
         ) to interceptor
     }
+
+    /** The device with no network: the call never leaves the process, exactly as a transport failure does. */
+    private fun offlineSource() = HttpNovelSource(
+        baseUrl = BASE_URL,
+        httpClient = OkHttpClient.Builder().addInterceptor(OfflineInterceptor()).build(),
+    )
+
+    /** The handle [getChapters] would hand back for chapter 1, without a listing request to produce one. */
+    private fun chapterOne() = Chapter(
+        sourceId = SOURCE_ID,
+        novelId = "torre-de-cristal",
+        id = "torre-de-cristal-1",
+        title = "El ascensor",
+        url = CHAPTER_URL,
+    )
 
     /** Answers from a fixed table and never delegates down the chain, so no socket is opened. */
     private class RecordingInterceptor(private val routes: Map<String, String>) : Interceptor {
@@ -178,17 +232,44 @@ class HttpNovelSourceTest {
         }
     }
 
+    /** Throws the way OkHttp does when the connection was never made, which is what an offline device looks like. */
+    private class OfflineInterceptor : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response = throw IOException("no route to host")
+    }
+
     private companion object {
         /** Split so assertions read `$HOST/index.html` and do not end up with a doubled slash. */
         const val HOST = "http://10.0.2.2:8080"
         const val BASE_URL = "$HOST/"
 
+        const val CHAPTER_PATH = "/chapter/torre-de-cristal-1.html"
+        const val CHAPTER_URL = "$HOST$CHAPTER_PATH"
+
         val ROUTES = mapOf(
             "/index.html" to "index.html",
             "/search.html" to "search.html",
             "/novel/torre-de-cristal.html" to "novel/torre-de-cristal.html",
-            "/chapter/torre-de-cristal-1.html" to "chapter/torre-de-cristal-1.html",
+            CHAPTER_PATH to "chapter/torre-de-cristal-1.html",
         )
+
+        /**
+         * A chapter page whose content container holds nothing a reader can read: the ad block and the script
+         * are there, and both are stripped. Everything the fixture set serves has at least one paragraph, so this
+         * shape has to be written out.
+         */
+        val PAGE_WITHOUT_BLOCKS = """
+            <html lang="es">
+            <body>
+              <article class="chapter">
+                <h1 class="chapter-title">Capitulo 1: El ascensor</h1>
+                <div class="chapter-content">
+                  <script>window.__CHAPTER_ADS__ = ["banner-a"];</script>
+                  <div class="ad-slot" data-ad-network="fixture">Patrocinado por el Sponsor Ficticio</div>
+                </div>
+              </article>
+            </body>
+            </html>
+        """.trimIndent()
 
         fun fixture(name: String): String =
             checkNotNull(javaClass.classLoader.getResourceAsStream("fixtures/$name")) {

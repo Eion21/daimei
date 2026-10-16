@@ -595,6 +595,30 @@ class NovelReaderViewModelTest {
     }
 
     @Test
+    fun `a chapter with no blocks is a failure and not a blank page`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            // What the device cache still held: `{"blocks":[]}`. `ChapterBody` draws one item per block, so this
+            // content is an empty LazyColumn — a black page the reader cannot tell apart from a crash. Even with
+            // the source and the cache both refusing to produce one, the reader has to treat it as a failure.
+            val history = FakeHistoryRepository()
+            val viewModel = viewModel(
+                content = FakeContentRepository(mapOf(CHAPTER_ID to ChapterContent(blocks = emptyList()))),
+                history = history,
+            )
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            assertNull(viewModel.content.value, "a chapter with no blocks was published as something to read")
+            assertNotNull(viewModel.error.value, "a chapter with no blocks reported no failure")
+            assertTrue(history.updates.isEmpty(), "a chapter nobody could read was written to History")
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
     fun `a chapter whose content failed to load writes no history`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {

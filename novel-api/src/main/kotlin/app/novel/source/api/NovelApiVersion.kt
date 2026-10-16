@@ -17,7 +17,10 @@ package app.novel.source.api
  * is the guard: raising the contract without raising what the loader accepts would otherwise stop every installed
  * novel extension from loading, with no build error anywhere to warn anyone.
  *
- * Raise this only for an incompatible change to the interfaces in this module. It is a promise that an apk built
- * against the previous value no longer links.
+ * Raising this value does not by itself strand an installed extension: the loader keeps every previous
+ * version in its supported list, so a raise may be additive (as 1.0 → 1.1 was, when the host network
+ * was added). The only hard rule is that whichever value is declared here is also listed there, and
+ * `NovelApiContractVersionTest` is what enforces it. Remove a previous version from that list only
+ * when an apk built against it genuinely no longer links.
  */
-const val NOVEL_API_VERSION: Double = 1.0
+const val NOVEL_API_VERSION: Double = 1.1

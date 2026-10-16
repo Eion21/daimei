@@ -6,6 +6,8 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.pm.PackageInfoCompat
+import app.novel.source.api.NetworkedNovelSource
+import app.novel.source.api.NovelNetwork
 import app.novel.source.api.NovelSource
 import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.tachiyomi.extension.model.Extension
@@ -60,6 +62,22 @@ internal object ExtensionLoader {
         (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else 0)
 
     private const val PRIVATE_EXTENSION_EXTENSION = "ext"
+
+    /**
+     * The host network this loader injects into extension sources that ask for it, installed once at
+     * startup by [eu.kanade.tachiyomi.extension.ExtensionManager] before any load can run.
+     *
+     * It lives here rather than being threaded through as a parameter because the install receiver
+     * reaches the loader through `loadExtensionFromPkgName`, which no caller can hand a network to.
+     * Holding the host's own network handle is not the static state decision D2 rules out: nothing
+     * static is exposed to an extension, and the same apk loading twice shares one stateless client.
+     */
+    @Volatile
+    private var novelNetwork: NovelNetwork? = null
+
+    fun installNovelNetwork(network: NovelNetwork) {
+        novelNetwork = network
+    }
 
     private fun getPrivateExtensionDir(context: Context) = File(context.filesDir, "exts")
 
@@ -457,7 +475,22 @@ internal object ExtensionLoader {
             }
             .flatMap {
                 try {
-                    when (val obj = Class.forName(it, false, classLoader).getDeclaredConstructor().newInstance()) {
+                    val obj = Class.forName(it, false, classLoader).getDeclaredConstructor().newInstance()
+
+                    // Bound here on purpose: after construction and before the object is wrapped, returned and
+                    // registered in SourceRegistry. A NetworkedNovelSource has no network until bindNetwork is
+                    // called, so anything that reached it earlier — the first popular() of a source registered in
+                    // that gap — would fail. Binding at the single instantiation site is what makes every later
+                    // path safe, and it is reached only after the gate above proved the apk signed and trusted.
+                    // A source that does not implement the interface (a 1.0 apk, or one that brings its own stack)
+                    // is left exactly as it is — decision D5.
+                    if (obj is NetworkedNovelSource) {
+                        val network = novelNetwork
+                            ?: error("The host network was not installed before loading $it")
+                        obj.bindNetwork(network)
+                    }
+
+                    when (obj) {
                         // A novel extension declares a NovelSource, which is neither a Source nor a SourceFactory.
                         // The adapter turns it into the Source everything downstream already consumes, and it is
                         // built only here, after the signature gate: the third-party class is instantiated strictly
@@ -587,8 +620,11 @@ internal const val METADATA_NOVEL_API_VERSION = "app.novel.extensionApi"
  * The novel contract versions this app can run, the counterpart of [ExtensionLoader.SUPPORTED_LIB_VERSIONS] but its
  * own list under its own key, so an incompatible change to `:novel-api` can raise this version without that being a
  * manga extension change. Built the same way: whatever is listed here is what the loader accepts.
+ *
+ * 1.0 stays in the list beside 1.1 because the network capability was added additively (decision D3): an extension
+ * already installed at 1.0 must keep loading. Only remove a version when an apk built against it no longer links.
  */
-internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0)
+internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0, 1.1)
 
 /** The two kinds of extension apk this app can load. */
 internal enum class ExtensionKind { MANGA, NOVEL }

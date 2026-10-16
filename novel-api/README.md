@@ -10,14 +10,15 @@ This README is for someone writing that extension in **their own repository**, n
 
 ```kotlin
 dependencies {
-    compileOnly("app.novel:novel-api:1.0")
+    compileOnly("app.novel:novel-api:1.1")
 }
 ```
 
-- **Coordinates:** `app.novel:novel-api:1.0`
+- **Coordinates:** `app.novel:novel-api:1.1`
 - The version tracks the contract version declared by `NOVEL_API_VERSION` in
-  `app/novel/source/api/NovelApiVersion.kt`. If your manifest declares `app.novel.extensionApi` `1.0`, you depend on
-  `1.0`.
+  `app/novel/source/api/NovelApiVersion.kt`. If your manifest declares `app.novel.extensionApi` `1.1`, you depend on
+  `1.1`. An extension that does not need the host network can stay on `1.0`; the host keeps previous contract versions
+  loadable.
 - The dependency **must be `compileOnly`**, never `implementation`. The host provides the `:novel-api` classes at
   runtime. If your APK bundled its own copy of `app.novel.source.api.NovelSource`, the host's class loader would see
   two distinct `NovelSource` classes, `is NovelSource` would be false, and your source would never load.
@@ -101,3 +102,44 @@ Nothing of yours is instantiated until it has passed a fixed, ordered gate. In o
 
 There is no path that instantiates a third-party class before steps 1–3. Your code runs only after the user has
 granted trust, exactly as with a manga extension.
+
+## 5. Networking (contract `1.1`)
+
+An extension ships no HTTP client. The host owns the socket, the timeouts and the `User-Agent`, and hands you the
+response body; you keep the part that is actually about the site — the selectors and the parsing.
+
+To use it, implement `NetworkedNovelSource` instead of `NovelSource`:
+
+```kotlin
+class MyNovelSource : NetworkedNovelSource {
+    private lateinit var network: NovelNetwork
+
+    override fun bindNetwork(network: NovelNetwork) {
+        this.network = network
+    }
+
+    override suspend fun popular(page: Int): NovelPage {
+        val html = network.fetch("https://example.com/popular?page=$page")
+        // parse html with your own selectors
+    }
+
+    // ... the rest of NovelSource
+}
+```
+
+- `NovelNetwork.fetch(url, headers = emptyMap())` returns the body as text. It **throws** when the request fails or
+  the response is not successful, so `""` always means a genuinely empty page, never a failure.
+- The network is injected through `bindNetwork`, called by the host right after it constructs your class and before
+  it is registered. There is no constructor parameter because the host instantiates your class by reflection with a
+  no-argument constructor.
+- You do **not** need `withContext(Dispatchers.IO)`. The host's implementation already moves the call off the main
+  thread. Bundling a copy of kotlinx-coroutines to do it yourself would shadow the host's and break the linker.
+- An extension that does not implement `NetworkedNovelSource` is left untouched and may keep bringing its own HTTP
+  stack.
+
+Declaring `app.novel.extensionApi` `1.1` in your manifest is what says you require this capability. The host still
+loads `1.0` extensions.
+
+Only `NovelNetwork` and `NetworkedNovelSource` cross the `NovelSource` boundary. Anything you bundle for parsing
+(for example Jsoup) must never appear in a `NovelSource` method signature, or the host's class loader will see two
+different copies of it.

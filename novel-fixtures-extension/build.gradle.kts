@@ -32,4 +32,16 @@ dependencies {
     // ClassLoader would see two distinct NovelSource classes and `is
     // NovelSource` would fail on the loaded instance.
     compileOnly(projects.novelApi)
+
+    // The extension owns its own HTML parsing, so it bundles Jsoup. Its types never cross the
+    // NovelSource signature — the host network hands back a plain String — so bundling it does not
+    // shadow anything the host provides (decision D6).
+    implementation(libs.jsoup)
+
+    // Jsoup publishes its nullability as org.jspecify annotations but declares that artifact
+    // "build time only", so every consumer has to supply it or the Kotlin compiler rejects the
+    // inferred types with "type annotation class is inaccessible". :app never noticed because
+    // androidx.appcompat drags jspecify in transitively; an extension APK has to declare it.
+    // Annotations only: nothing is packaged.
+    compileOnly("org.jspecify:jspecify:1.0.0")
 }

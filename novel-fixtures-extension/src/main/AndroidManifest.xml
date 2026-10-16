@@ -11,22 +11,28 @@
     <application android:label="Fixture novels (extension)">
 
         <!--
-          Fully-qualified name of the class implementing
-          app.novel.source.api.NovelSource. The loader instantiates it via
-          reflection after the host-ownership/signature checks pass.
-          Mirrors Mihon's `tachiyomi.extension.class`.
+          Fully-qualified names of the classes implementing
+          app.novel.source.api.NovelSource, ';'-separated. The loader
+          instantiates each via reflection after the host-ownership/signature
+          checks pass. Mirrors Mihon's `tachiyomi.extension.class`.
+
+          FixtureNovelSource is self-contained and implements no network
+          interface, so the host leaves it untouched (decision D5).
+          HttpFixtureNovelSource implements NetworkedNovelSource and is bound
+          the host network before it is registered.
         -->
         <meta-data
             android:name="app.novel.extension.class"
-            android:value="app.novel.extension.fixtures.FixtureNovelSource" />
+            android:value="app.novel.extension.fixtures.FixtureNovelSource;app.novel.extension.fixtures.HttpFixtureNovelSource" />
 
         <!--
           Contract version this extension was built against. Mirrors Mihon's
           `tachiyomix.extensionLib`; the loader rejects unsupported versions.
+          1.1 because HttpFixtureNovelSource requires the host network capability.
         -->
         <meta-data
             android:name="app.novel.extensionApi"
-            android:value="1.0" />
+            android:value="1.1" />
 
     </application>
 

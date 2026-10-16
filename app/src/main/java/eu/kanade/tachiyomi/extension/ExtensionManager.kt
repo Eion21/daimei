@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.extension
 
 import android.content.Context
 import app.novel.runtime.SourceRegistry
+import app.novel.source.api.NovelNetwork
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -64,6 +65,7 @@ class ExtensionManager(
     private val installer: ExtensionInstaller,
     private val extensionUpdateNotifier: ExtensionUpdateNotifier,
     private val sourceRegistry: SourceRegistry,
+    private val novelNetwork: NovelNetwork,
 ) {
 
     private val initialized = CompletableDeferred<Unit>()
@@ -102,6 +104,12 @@ class ExtensionManager(
     val notLoadedExtensionsFlow = notLoadedExtensionMapFlow.mapExtensionsWhenInitialized()
 
     init {
+        // Hand the network to the loader before the first load can run. The loader keeps it so the install
+        // receiver path — which instantiates a source through the platform's broadcast machinery, with no
+        // caller able to pass a parameter — binds the same network. Installing it here is what guarantees
+        // there is never an extension instance that got registered without one.
+        ExtensionLoader.installNovelNetwork(novelNetwork)
+
         scope.launch(Dispatchers.IO) {
             loadExtensions()
             ExtensionInstallReceiver(InstallationListener(), scope).register(context)

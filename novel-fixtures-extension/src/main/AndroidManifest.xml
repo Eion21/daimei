@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Marks this APK as a novel extension. The host loader looks for this
+      feature (mirroring Mihon's `tachiyomi.extension`) to tell a novel
+      extension package apart from an ordinary app.
+    -->
+    <uses-feature android:name="app.novel.extension" />
+
+    <application android:label="Fixture novels (extension)">
+
+        <!--
+          Fully-qualified name of the class implementing
+          app.novel.source.api.NovelSource. The loader instantiates it via
+          reflection after the host-ownership/signature checks pass.
+          Mirrors Mihon's `tachiyomi.extension.class`.
+        -->
+        <meta-data
+            android:name="app.novel.extension.class"
+            android:value="app.novel.extension.fixtures.FixtureNovelSource" />
+
+        <!--
+          Contract version this extension was built against. Mirrors Mihon's
+          `tachiyomix.extensionLib`; the loader rejects unsupported versions.
+        -->
+        <meta-data
+            android:name="app.novel.extensionApi"
+            android:value="1.0" />
+
+    </application>
+
+</manifest>

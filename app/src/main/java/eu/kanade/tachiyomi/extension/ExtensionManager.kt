@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension
 
 import android.content.Context
+import app.novel.runtime.SourceRegistry
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -12,6 +13,7 @@ import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallReceiver
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller
 import eu.kanade.tachiyomi.extension.util.ExtensionLoader
+import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -61,12 +63,18 @@ class ExtensionManager(
     private val updateExtensionStores: UpdateExtensionStores,
     private val installer: ExtensionInstaller,
     private val extensionUpdateNotifier: ExtensionUpdateNotifier,
+    private val sourceRegistry: SourceRegistry,
 ) {
 
     private val initialized = CompletableDeferred<Unit>()
 
     // A full load replaces both maps, so install events wait for it and apply on top instead of being overwritten
     private val loadMutex = Mutex()
+
+    // The string ids of the novel sources this manager registered into [sourceRegistry]. Tracked so a reload can
+    // retract the ones whose extension stopped being loaded without ever touching the sources the graph registered
+    // itself (the Demo and HTTP ones). Guarded by [loadMutex], which every caller already holds.
+    private val registeredNovelSourceIds = mutableSetOf<String>()
 
     @Volatile
     private var stores = emptyList<ExtensionStore>()
@@ -170,6 +178,8 @@ class ExtensionManager(
             notLoadedExtensionMapFlow.value = extensions
                 .filterIsInstance<Extension.NotLoaded>()
                 .associateBy { it.pkgName }
+
+            syncNovelSources(loadedExtensionMapFlow.value.values)
 
             // Newly loaded extensions have no status derived from the store index yet
             refreshStatuses()
@@ -336,6 +346,32 @@ class ExtensionManager(
     }
 
     /**
+     * Makes the novel sources an extension contributes reachable from [SourceRegistry].
+     *
+     * A novel-source apk declares an `app.novel.source.api.NovelSource`, which the loader hands back wrapped in a
+     * [NovelSourceAdapter]. Registering the wrapped source here is what lets `GetEnabledSources` — which reads the
+     * registry, not the extension list, to keep a novel source regardless of language — see an extension-installed
+     * novel exactly like one this build ships with. Registering and retracting go through the registry's observable
+     * surface, so a source that arrives while the app runs is picked up without a restart.
+     *
+     * Only the ids this manager registered are retracted, so the sources the graph itself registered are untouched.
+     */
+    private fun syncNovelSources(extensions: Collection<Extension.Loaded>) {
+        val novelSources = extensions
+            .flatMap { it.sources }
+            .filterIsInstance<NovelSourceAdapter>()
+            .map { it.novelSource }
+            .distinctBy { it.info.id }
+        val currentIds = novelSources.mapTo(mutableSetOf()) { it.info.id }
+
+        (registeredNovelSourceIds - currentIds).forEach(sourceRegistry::unregister)
+        novelSources.forEach(sourceRegistry::register)
+
+        registeredNovelSourceIds.clear()
+        registeredNovelSourceIds += currentIds
+    }
+
+    /**
      * Unregisters the extension in this and the source managers given its package name. Note this
      * method is called for every uninstalled application in the system.
      *
@@ -354,18 +390,21 @@ class ExtensionManager(
         override suspend fun onExtensionLoaded(extension: Extension.Loaded) = loadMutex.withLock {
             registerExtension(extension)
             notLoadedExtensionMapFlow.update { it - extension.pkgName }
+            syncNovelSources(loadedExtensionMapFlow.value.values)
             refreshStatuses()
         }
 
         override suspend fun onExtensionNotLoaded(extension: Extension.NotLoaded) = loadMutex.withLock {
             loadedExtensionMapFlow.update { it - extension.pkgName }
             notLoadedExtensionMapFlow.update { it + extension }
+            syncNovelSources(loadedExtensionMapFlow.value.values)
             refreshStatuses()
         }
 
         override suspend fun onPackageUninstalled(pkgName: String) = loadMutex.withLock {
             ExtensionLoader.uninstallPrivateExtension(context, pkgName)
             unregisterExtension(pkgName)
+            syncNovelSources(loadedExtensionMapFlow.value.values)
             updatePendingUpdatesCount()
         }
     }

@@ -28,8 +28,12 @@ import tachiyomi.domain.source.model.Source as DomainSource
  *
  * It is deliberately a plain class rather than a graph node. It holds no state, needs nothing from the graph, and
  * staying outside it is what lets the mapping be tested without building one.
+ *
+ * [novelSource] is exposed rather than private because the source a loaded extension declares has to be mirrored
+ * into `SourceRegistry` — the list `GetEnabledSources` reads to keep a novel source regardless of its language — and
+ * the registry must hold the one instance this adapter wraps, not a second wrapper of the same declaration.
  */
-class NovelSourceAdapter(private val novelSource: NovelSource) : Source {
+class NovelSourceAdapter(val novelSource: NovelSource) : Source {
 
     override val id: Long = NovelMapper.generateSourceId(novelSource.info.id)
 

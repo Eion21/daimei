@@ -6,10 +6,12 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.pm.PackageInfoCompat
+import app.novel.source.api.NovelSource
 import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
+import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import eu.kanade.tachiyomi.util.lang.Hash
 import eu.kanade.tachiyomi.util.storage.copyAndSetReadOnlyTo
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +43,6 @@ import java.io.File
  */
 internal object ExtensionLoader {
 
-    private const val EXTENSION_FEATURE = "tachiyomi.extension"
     private const val METADATA_SOURCE_CLASS = "tachiyomi.extension.class"
     private const val METADATA_SOURCE_FACTORY = "tachiyomi.extension.factory"
     private const val METADATA_NSFW = "tachiyomi.extension.nsfw"
@@ -352,31 +353,70 @@ internal object ExtensionLoader {
             return notLoaded(Extension.NotLoaded.Reason.Malformed)
         }
 
-        // Validate lib version
-        val libVersion = metaData.getFloat(METADATA_EXTENSION_LIB)
-            .takeUnless { it == 0.0f }
-            ?.toString()
-            ?.toDouble()
-            ?: versionName.substringBeforeLast('.').toDoubleOrNull()
-        if (libVersion == null || libVersion !in SUPPORTED_LIB_VERSIONS) {
-            logcat(LogPriority.WARN) {
-                "Lib version is $libVersion, while only version(s) ${SUPPORTED_LIB_VERSIONS.joinToString()} are supported"
+        // Which contract this apk was built against decides both the version list and the source-class metadata key.
+        // A package that reached here without a known feature is malformed rather than an extension.
+        val kind = extensionKindOf(pkgInfo.reqFeatures.orEmpty().mapNotNull { it.name })
+        if (kind == null) {
+            logcat(LogPriority.WARN) { "Package $pkgName isn't a known extension type" }
+            return notLoaded(Extension.NotLoaded.Reason.Malformed)
+        }
+
+        // Validate the contract version. A novel extension declares its own key against its own list, mirroring how
+        // the manga key is read against SUPPORTED_LIB_VERSIONS; neither list can move the other.
+        val libVersion = when (kind) {
+            ExtensionKind.MANGA ->
+                metaData.getFloat(METADATA_EXTENSION_LIB)
+                    .takeUnless { it == 0.0f }
+                    ?.toString()
+                    ?.toDouble()
+                    ?: versionName.substringBeforeLast('.').toDoubleOrNull()
+            ExtensionKind.NOVEL ->
+                contractVersionFromMetadata(metaData.getFloat(METADATA_NOVEL_API_VERSION))
+        }
+        val supportedVersions = when (kind) {
+            ExtensionKind.MANGA -> SUPPORTED_LIB_VERSIONS
+            ExtensionKind.NOVEL -> SUPPORTED_NOVEL_API_VERSIONS
+        }
+        val supportedVersion = libVersion != null && libVersion in supportedVersions
+
+        val hasSignatures = signatures.isNotEmpty()
+        val trusted = hasSignatures && trustExtension.isTrusted(pkgInfo, signatures, stores)
+        val contentWarningAllowed = !applyContentWarningsToInstalled || contentWarning in enabledContentWarnings
+
+        // The gate is decided in one place, in a fixed order, and it is the ONLY thing that lets the load continue
+        // to the classloader below. The novel branch is added beside this gate, never before it and never instead of
+        // it: nothing here instantiates a class, novel or manga, without a present and trusted signature.
+        when (
+            decideExtensionGate(
+                supportedVersion = supportedVersion,
+                hasSignatures = hasSignatures,
+                isTrusted = trusted,
+                contentWarningAllowed = contentWarningAllowed,
+            )
+        ) {
+            ExtensionGateDecision.UNSUPPORTED_VERSION -> {
+                logcat(LogPriority.WARN) {
+                    "Lib version is $libVersion, while only version(s) ${supportedVersions.joinToString()} are supported"
+                }
+                return notLoaded(Extension.NotLoaded.Reason.UnsupportedLibVersion, libVersion)
             }
-            return notLoaded(Extension.NotLoaded.Reason.UnsupportedLibVersion, libVersion)
+            ExtensionGateDecision.UNSIGNED -> {
+                logcat(LogPriority.WARN) { "Package $pkgName isn't signed" }
+                return notLoaded(Extension.NotLoaded.Reason.Unsigned, libVersion)
+            }
+            ExtensionGateDecision.UNTRUSTED -> {
+                logcat(LogPriority.WARN) { "Extension $pkgName isn't trusted" }
+                return notLoaded(Extension.NotLoaded.Reason.Untrusted(signatures.last()), libVersion)
+            }
+            ExtensionGateDecision.FILTERED -> {
+                logcat(LogPriority.WARN) { "Extension $pkgName with $contentWarning not allowed" }
+                return notLoaded(Extension.NotLoaded.Reason.Filtered, libVersion)
+            }
+            ExtensionGateDecision.ALLOWED -> Unit
         }
 
-        if (signatures.isEmpty()) {
-            logcat(LogPriority.WARN) { "Package $pkgName isn't signed" }
-            return notLoaded(Extension.NotLoaded.Reason.Unsigned, libVersion)
-        } else if (!trustExtension.isTrusted(pkgInfo, signatures, stores)) {
-            logcat(LogPriority.WARN) { "Extension $pkgName isn't trusted" }
-            return notLoaded(Extension.NotLoaded.Reason.Untrusted(signatures.last()), libVersion)
-        }
-
-        if (applyContentWarningsToInstalled && contentWarning !in enabledContentWarnings) {
-            logcat(LogPriority.WARN) { "Extension $pkgName with $contentWarning not allowed" }
-            return notLoaded(Extension.NotLoaded.Reason.Filtered, libVersion)
-        }
+        // The gate refuses to continue without a version it supports, so the parse above cannot have been null here.
+        val extensionLibVersion = requireNotNull(libVersion)
 
         // Everything above is cheap to check again, everything below isn't. Nothing about this apk
         // changed and it still passes, so keep the sources that are already registered for it.
@@ -394,7 +434,12 @@ internal object ExtensionLoader {
             return notLoaded(Extension.NotLoaded.Reason.Failed(e.rootMessage, e.stackTraceToString()), libVersion)
         }
 
-        val sourceClasses = metaData.getString(METADATA_SOURCE_CLASS)
+        // Each kind carries its source class under its own key, so a novel apk cannot be read as a manga one.
+        val sourceClassMetadata = when (kind) {
+            ExtensionKind.MANGA -> METADATA_SOURCE_CLASS
+            ExtensionKind.NOVEL -> METADATA_NOVEL_SOURCE_CLASS
+        }
+        val sourceClasses = metaData.getString(sourceClassMetadata)
         if (sourceClasses.isNullOrBlank()) {
             logcat(LogPriority.WARN) { "Missing source class for extension $extName" }
             return notLoaded(Extension.NotLoaded.Reason.Malformed, libVersion)
@@ -413,6 +458,11 @@ internal object ExtensionLoader {
             .flatMap {
                 try {
                     when (val obj = Class.forName(it, false, classLoader).getDeclaredConstructor().newInstance()) {
+                        // A novel extension declares a NovelSource, which is neither a Source nor a SourceFactory.
+                        // The adapter turns it into the Source everything downstream already consumes, and it is
+                        // built only here, after the signature gate: the third-party class is instantiated strictly
+                        // after it has been proven signed and trusted.
+                        is NovelSource -> listOf(NovelSourceAdapter(obj))
                         is Source -> listOf(obj)
                         is SourceFactory -> obj.createSources()
                         else -> throw Exception("Unknown source class type: ${obj.javaClass}")
@@ -438,7 +488,7 @@ internal object ExtensionLoader {
             pkgName = pkgName,
             versionName = versionName,
             versionCode = versionCode,
-            libVersion = libVersion,
+            libVersion = extensionLibVersion,
             lang = lang,
             contentWarning = contentWarning,
             sources = sources,
@@ -477,7 +527,7 @@ internal object ExtensionLoader {
      * @param pkgInfo The package info of the application.
      */
     private fun isPackageAnExtension(pkgInfo: PackageInfo): Boolean {
-        return pkgInfo.reqFeatures.orEmpty().any { it.name == EXTENSION_FEATURE }
+        return pkgInfo.reqFeatures.orEmpty().any { isExtensionFeature(it.name) }
     }
 
     /**
@@ -519,6 +569,90 @@ internal object ExtensionLoader {
         val packageInfo: PackageInfo,
         val isShared: Boolean,
     )
+}
+
+/** The feature a manga extension apk declares. */
+internal const val MANGA_EXTENSION_FEATURE = "tachiyomi.extension"
+
+/** The feature a novel extension apk declares. */
+internal const val NOVEL_EXTENSION_FEATURE = "app.novel.extension"
+
+/** Metadata key holding the fully-qualified name of the class implementing [NovelSource]. */
+internal const val METADATA_NOVEL_SOURCE_CLASS = "app.novel.extension.class"
+
+/** Metadata key holding the novel contract version the apk was built against. */
+internal const val METADATA_NOVEL_API_VERSION = "app.novel.extensionApi"
+
+/**
+ * The novel contract versions this app can run, the counterpart of [ExtensionLoader.SUPPORTED_LIB_VERSIONS] but its
+ * own list under its own key, so an incompatible change to `:novel-api` can raise this version without that being a
+ * manga extension change. Built the same way: whatever is listed here is what the loader accepts.
+ */
+internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0)
+
+/** The two kinds of extension apk this app can load. */
+internal enum class ExtensionKind { MANGA, NOVEL }
+
+/**
+ * Which kind of extension [featureNames] describes, or null when it is not an extension at all.
+ *
+ * A package declaring both features is treated as a manga extension: the manga path existed first, and preferring it
+ * is what keeps that path exactly as it was when the novel feature is added beside it.
+ */
+internal fun extensionKindOf(featureNames: Collection<String>): ExtensionKind? = when {
+    MANGA_EXTENSION_FEATURE in featureNames -> ExtensionKind.MANGA
+    NOVEL_EXTENSION_FEATURE in featureNames -> ExtensionKind.NOVEL
+    else -> null
+}
+
+/**
+ * Whether [name] is one of the extension features this app knows.
+ *
+ * [name] is nullable on purpose. `FeatureInfo.name` is a platform type that can be absent, and the comparison this
+ * replaced treated an absent name as "not an extension". Requiring non-null here once crashed the whole extension
+ * list on a device that carried a feature with no name: one malformed feature took down every extension, manga
+ * included, because the failure happened while filtering the list rather than while examining one package.
+ */
+internal fun isExtensionFeature(name: String?): Boolean =
+    name == MANGA_EXTENSION_FEATURE || name == NOVEL_EXTENSION_FEATURE
+
+/**
+ * The contract version [raw] names, or null when the metadata did not carry one. Android reports an absent float
+ * metadata value as 0, so 0 is "missing" rather than a version anyone can declare.
+ */
+internal fun contractVersionFromMetadata(raw: Float): Double? = raw.takeUnless { it == 0.0f }?.toString()?.toDouble()
+
+/** Whether [version] is a novel contract version this app can run. */
+internal fun isSupportedNovelApiVersion(version: Double?): Boolean =
+    version != null && version in SUPPORTED_NOVEL_API_VERSIONS
+
+/**
+ * The loader's decision, before it builds a classloader or instantiates any third-party class.
+ *
+ * The order is the contract and must not change:
+ *
+ * 1. an unsupported contract version is refused first — an apk built against an interface this app cannot run is
+ *    not worth any further work;
+ * 2. a missing signature is refused next, and a present-but-untrusted one after it. These two are the boundary
+ *    between running third-party code and not running it, so nothing past them — in particular the novel branch —
+ *    may be reached without passing through them.
+ *
+ * The novel case supplies its feature and its version key earlier, but it flows through this same gate: there is no
+ * value of [ExtensionKind] that lets a package reach [ALLOWED] without `hasSignatures && isTrusted`.
+ */
+internal enum class ExtensionGateDecision { UNSUPPORTED_VERSION, UNSIGNED, UNTRUSTED, FILTERED, ALLOWED }
+
+internal fun decideExtensionGate(
+    supportedVersion: Boolean,
+    hasSignatures: Boolean,
+    isTrusted: Boolean,
+    contentWarningAllowed: Boolean,
+): ExtensionGateDecision = when {
+    !supportedVersion -> ExtensionGateDecision.UNSUPPORTED_VERSION
+    !hasSignatures -> ExtensionGateDecision.UNSIGNED
+    !isTrusted -> ExtensionGateDecision.UNTRUSTED
+    !contentWarningAllowed -> ExtensionGateDecision.FILTERED
+    else -> ExtensionGateDecision.ALLOWED
 }
 
 /**

@@ -16,8 +16,9 @@
           instantiates each via reflection after the host-ownership/signature
           checks pass. Mirrors Mihon's `tachiyomi.extension.class`.
 
-          JabraScanSource implements NetworkedNovelSource, so the host binds
-          it the host network before it is registered.
+          JabraScanSource implements both NetworkedNovelSource and
+          ContextAwareNovelSource, so the host binds it the host network and a
+          context of its own package before it is registered.
         -->
         <meta-data
             android:name="app.novel.extension.class"
@@ -26,13 +27,16 @@
         <!--
           Contract version this extension was built against. Mirrors Mihon's
           `tachiyomix.extensionLib`; the loader rejects unsupported versions.
-          1.2 because JabraScanSource needs the host's `fetchBytes` to get a
-          chapter PDF as bytes; the 1.1 text `fetch` would decode it as text
-          and destroy it.
+          1.2 added the host's `fetchBytes`, which JabraScanSource needs to get a
+          chapter PDF as bytes; the 1.1 text `fetch` would decode it as text and
+          destroy it. 1.3 adds the Android context: JabraScanSource implements
+          ContextAwareNovelSource so the host hands it a context of its own
+          package, which PdfBox needs to read the glyph tables the AAR ships
+          under assets/.
         -->
         <meta-data
             android:name="app.novel.extensionApi"
-            android:value="1.2" />
+            android:value="1.3" />
 
     </application>
 

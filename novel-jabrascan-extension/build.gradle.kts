@@ -40,6 +40,20 @@ dependencies {
     // NovelSource` would fail on the loaded instance.
     compileOnly(projects.novelApi)
 
+    // app.novel.source.api.android.ContextAwareNovelSource is Android-only, so
+    // it lives in :novel-api-android rather than the plain-JVM :novel-api above.
+    // compileOnly for exactly the same reason as its neighbour: the host owns
+    // this class at runtime and the APK must not ship a second copy. A packaged
+    // copy would be a *different* ContextAwareNovelSource class, so the host's
+    // `is ContextAwareNovelSource` check would be false on the loaded instance.
+    // The loader detects that mismatch and refuses to inject the context (it
+    // never falls back to handing over the host's own context), so a bundled
+    // copy silently loses the capability instead of gaining it. Only the host
+    // context is on the APK's runtime classpath; this dependency is compile-time
+    // only, so nothing here reaches the extension RuntimeClasspath the APK is
+    // built from.
+    compileOnly(projects.novelApiAndroid)
+
     // Coroutines are compileOnly for the same reason :novel-api is. The host is a Kotlin application
     // and already ships kotlinx-coroutines at runtime, so the extension only needs the types to
     // compile: T5 wraps the CPU-heavy PdfBox work in `withContext(Dispatchers.IO)`, while

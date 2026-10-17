@@ -177,6 +177,14 @@ class MyNovelSource : ContextAwareNovelSource {
   same way `bindNetwork` works. A no-argument constructor is still required.
 - `app.novel:novel-api-android` must be `compileOnly` too. The host provides the interface at runtime; an APK that
   bundled its own copy would fail the host's `is ContextAwareNovelSource` check and silently never receive a context.
+- You need this second coordinate **only** when you implement the context capability. An extension that does not
+  implement `ContextAwareNovelSource` depends on `app.novel:novel-api` alone and never needs the second one.
+- `app.novel:novel-api-android` is published as an **AAR**, so only an Android module can consume it — an Android
+  application or an Android library. A pure-JVM project cannot use it: the interface it carries takes an
+  `android.content.Context`, a type that exists only on an Android compile classpath. The AAR also carries metadata
+  the consumer has to satisfy or the build fails before anything compiles — compile against Android API `37.2` or
+  later, and enable core library desugaring (`isCoreLibraryDesugaringEnabled = true` plus a
+  `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")` dependency).
 - **A private `.ext` extension that needs a context will not load — by design.** A private extension is loaded from a
   file and is never registered with `PackageManager`, so the host cannot create a context for it. Rather than load it
   and fail later inside the library that wanted the context, the host refuses it with the reason

@@ -22,6 +22,8 @@ dependencies {
 - The dependency **must be `compileOnly`**, never `implementation`. The host provides the `:novel-api` classes at
   runtime. If your APK bundled its own copy of `app.novel.source.api.NovelSource`, the host's class loader would see
   two distinct `NovelSource` classes, `is NovelSource` would be false, and your source would never load.
+- Your build must compile with **Kotlin 2.4 or newer**. An older Kotlin compiler cannot read the standard library the
+  contract requests, and the failure does not name the real cause; section 7 has the error and the one-line fix.
 
 ## 2. The single most important rule: bundle nothing the host provides
 
@@ -261,3 +263,51 @@ class ConsumerNovelSource : NetworkedNovelSource, ContextAwareNovelSource {
 
 Contract `1.3` is what declares this capability, through `app.novel.extensionApi` `1.3` in your manifest. Extensions
 built against `1.0`, `1.1`, or `1.2` are untouched by it and keep loading exactly as before.
+
+## 7. Compile with Kotlin 2.4 or newer
+
+The contract requests a newer Kotlin standard library than an Android build provides on its own, so a consumer whose
+Kotlin compiler is older than 2.4 never gets past the first compile. The error names a metadata version:
+
+```
+Module was compiled with an incompatible version of Kotlin. The binary version of its metadata is 2.4.0, expected version is 2.2.0
+```
+
+It repeats once for each unreadable file, and behind it comes a block of errors naming standard-library functions as if
+they had been deleted:
+
+```
+e: file://…/kotlin-stdlib-2.4.21.jar!/META-INF/kotlin-stdlib-jdk7.kotlin_module Module was compiled with an incompatible
+   version of Kotlin. The binary version of its metadata is 2.4.0, expected version is 2.2.0
+e: file://…/kotlin-stdlib-2.4.21.jar!/META-INF/kotlin-stdlib.kotlin_module Module was compiled with an incompatible
+   version of Kotlin. The binary version of its metadata is 2.4.0, expected version is 2.2.0
+e: file://…/ConsumerNovelSource.kt:54:35 Unresolved reference 'emptyList'.
+e: file://…/ConsumerNovelSource.kt:54:67 Unresolved reference 'isNotEmpty'.
+e: file://…/ConsumerNovelSource.kt:62:69 Unresolved reference 'emptyList'.
+e: file://…/ConsumerNovelSource.kt:67:40 Unresolved reference 'listOf'.
+```
+
+The `Unresolved reference` lines are a consequence, not a second problem: those functions exist, and the compiler can
+only say that it was unable to read the file declaring them.
+
+Nor is it the contract's own code. Its classes are compiled with `languageVersion` and `apiVersion` pinned to `2.2`, so
+their metadata is `2.2.0` and an older compiler reads them; a test in this repository's own suite fails if that pin
+ever drifts. What is 2.4 is the **transitive `kotlin-stdlib` the contract requests**, and it wins dependency resolution
+against the one your build asks for: on AGP 9.4.1, whose built-in Kotlin is 2.2.0, the trail is
+`kotlin-stdlib:2.2.10 -> 2.4.21`.
+
+So build with **Kotlin 2.4 or newer**. Put that Kotlin Gradle plugin on your build classpath, and AGP's built-in Kotlin
+compiles with it instead of its own:
+
+```kotlin
+// Root build script. Any 2.4-or-newer version works; the contract itself is built with 2.4.21.
+buildscript {
+    dependencies {
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
+    }
+}
+```
+
+That is the supported combination, and it is what the host app in this repository uses. The contract deliberately does
+not lower the standard library it requests to make an older compiler work: a library built by Kotlin 2.4 that asks for
+an older standard library is a pairing nothing tests, so it is not one to publish.

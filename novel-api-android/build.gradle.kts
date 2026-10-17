@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+
 plugins {
     alias(mihonx.plugins.android.library)
     alias(mihonx.plugins.spotless)
@@ -51,11 +53,31 @@ android {
     }
 }
 
+// The same pin as `:novel-api`, for the same reason: the metadata version written into the published AAR's classes
+// follows the language version, and a consumer whose Kotlin is older than the one that builds this module cannot
+// read it. AGP 9.4.1's built-in Kotlin is 2.2.0, so pinning to 2.2 is what keeps a do-nothing consumer compiling.
+// ContextAwareNovelSourceKotlinMetadataTest fails if the published metadata ever climbs above 2.2 again.
+kotlin {
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_2)
+        apiVersion.set(KotlinVersion.KOTLIN_2_2)
+    }
+}
+
 dependencies {
     // compileOnly, never api/implementation: the host supplies `NovelSource` at runtime through its own ClassLoader.
     // Bundling `:novel-api` into this artifact would put a second copy of `NovelSource` on a consumer's runtime
     // classpath and break `is NovelSource` in the host.
     compileOnly(projects.novelApi)
+
+    // Tests only. The metadata check loads `ContextAwareNovelSource` by reflection, and a class cannot be loaded
+    // without its supertype: `:novel-api` is `compileOnly` for production and therefore absent from the runtime
+    // classpath, so the test runtime needs it explicitly. `libs.bundles.test` is the same JUnit 5 setup the other
+    // Android modules in this build use (`android-base` calls `configureTest`, which switches every Test task to
+    // `useJUnitPlatform()`).
+    testImplementation(projects.novelApi)
+    testImplementation(libs.bundles.test)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 publishing {

@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+
 plugins {
     id("org.jetbrains.kotlin.jvm")
     alias(mihonx.plugins.spotless)
@@ -29,6 +31,18 @@ val novelApiVersion: String = providers.fileContents(
 group = "app.novel"
 // artifactId defaults to the project name, "novel-api", which is what the task requires.
 version = novelApiVersion
+
+// This artifact is consumed by third parties who compile it with their own Kotlin, which may be older than the one
+// that builds it here. The metadata version written into the shipped class files follows the language version, so
+// pinning both to 2.2 keeps the published metadata readable by the oldest Kotlin this contract is known to be
+// consumed from (AGP 9.4.1's built-in Kotlin is 2.2.0). These are interfaces and data classes; nothing here needs a
+// newer language level. NovelApiKotlinMetadataTest fails if the published metadata ever climbs above 2.2 again.
+kotlin {
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_2)
+        apiVersion.set(KotlinVersion.KOTLIN_2_2)
+    }
+}
 
 publishing {
     publications {

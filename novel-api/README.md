@@ -159,15 +159,83 @@ dependencies {
     compileOnly("app.novel:novel-api:1.3")
     compileOnly("app.novel:novel-api-android:1.3")
 }
+```
 
-class MyNovelSource : ContextAwareNovelSource {
+The class below is a complete, compiling file — copied verbatim from the consumer project that builds against
+exactly these two coordinates, imports included. The imports matter: the interface lives in
+`app.novel.source.api.android`, **not** in `app.novel.source.api` like the rest of the contract. It is kept as a copy
+of a file that really compiles rather than as a hand-written fragment, so it cannot drift from the interface without
+failing a compile.
+
+```kotlin
+package com.example.consumer
+
+import android.content.Context
+import app.novel.source.api.Chapter
+import app.novel.source.api.ChapterContent
+import app.novel.source.api.ContentBlock
+import app.novel.source.api.NetworkedNovelSource
+import app.novel.source.api.Novel
+import app.novel.source.api.NovelNetwork
+import app.novel.source.api.NovelPage
+import app.novel.source.api.SourceInfo
+import app.novel.source.api.android.ContextAwareNovelSource
+
+/**
+ * A third-party extension written the way an author outside this repository writes one: it depends
+ * on the two published `compileOnly` coordinates and on nothing else.
+ *
+ * This is a **compile-and-package proof, not a working extension**. It implements the two optional
+ * capabilities *at the same time* on one class, in one source file, so a single successful
+ * compilation proves they compose:
+ *
+ * - contract `1.2`: [NetworkedNovelSource] with [bindNetwork], and [NovelNetwork.fetchBytes] is
+ *   actually *called* from [getChapterContent], so the byte path is exercised by the compiler
+ *   rather than merely referenced;
+ * - contract `1.3`: [ContextAwareNovelSource] with `bindContext`, the Android-only interface that
+ *   lives in the `app.novel:novel-api-android` AAR.
+ *
+ * The host still instantiates this class by reflection with a no-argument constructor, so both
+ * capabilities arrive through their `bind*` methods after construction.
+ */
+class ConsumerNovelSource : NetworkedNovelSource, ContextAwareNovelSource {
+    private lateinit var network: NovelNetwork
     private lateinit var context: Context
+
+    override val info: SourceInfo = SourceInfo(
+        id = "com.example.consumer",
+        name = "Consumer",
+        version = "1.0.0",
+        language = "en",
+    )
+
+    override fun bindNetwork(network: NovelNetwork) {
+        this.network = network
+    }
 
     override fun bindContext(context: Context) {
         this.context = context
     }
 
-    // ... the rest of NovelSource
+    override suspend fun popular(page: Int): NovelPage {
+        // Reads the injected context, so the 1.3 binding is exercised and not merely stored.
+        val origin: String = context.packageName
+        val html = network.fetch("https://example.com/popular?page=$page&origin=$origin")
+        return NovelPage(novels = emptyList(), hasNextPage = html.isNotEmpty())
+    }
+
+    override suspend fun search(query: String, page: Int): NovelPage =
+        NovelPage(novels = emptyList(), hasNextPage = false)
+
+    override suspend fun getNovelDetails(novel: Novel): Novel = novel
+
+    override suspend fun getChapters(novel: Novel): List<Chapter> = emptyList()
+
+    override suspend fun getChapterContent(chapter: Chapter): ChapterContent {
+        // The 1.2 byte path: a binary body must come back as raw bytes, never decoded as text.
+        val bytes = network.fetchBytes(chapter.url ?: "https://example.com/chapter.pdf")
+        return ChapterContent(blocks = listOf(ContentBlock.Paragraph("${bytes.size} bytes")))
+    }
 }
 ```
 

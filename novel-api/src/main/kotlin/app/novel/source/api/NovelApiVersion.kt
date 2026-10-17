@@ -19,8 +19,9 @@ package app.novel.source.api
  *
  * Raising this value does not by itself strand an installed extension: the loader keeps every previous
  * version in its supported list, so a raise may be additive (as 1.0 → 1.1 was, when the host network
- * was added). The only hard rule is that whichever value is declared here is also listed there, and
+ * was added, and as 1.1 → 1.2 was, when the byte fetch was added beside the text one). The only hard
+ * rule is that whichever value is declared here is also listed there, and
  * `NovelApiContractVersionTest` is what enforces it. Remove a previous version from that list only
  * when an apk built against it genuinely no longer links.
  */
-const val NOVEL_API_VERSION: Double = 1.1
+const val NOVEL_API_VERSION: Double = 1.2

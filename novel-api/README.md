@@ -10,15 +10,15 @@ This README is for someone writing that extension in **their own repository**, n
 
 ```kotlin
 dependencies {
-    compileOnly("app.novel:novel-api:1.1")
+    compileOnly("app.novel:novel-api:1.2")
 }
 ```
 
-- **Coordinates:** `app.novel:novel-api:1.1`
+- **Coordinates:** `app.novel:novel-api:1.2`
 - The version tracks the contract version declared by `NOVEL_API_VERSION` in
-  `app/novel/source/api/NovelApiVersion.kt`. If your manifest declares `app.novel.extensionApi` `1.1`, you depend on
-  `1.1`. An extension that does not need the host network can stay on `1.0`; the host keeps previous contract versions
-  loadable.
+  `app/novel/source/api/NovelApiVersion.kt`. If your manifest declares `app.novel.extensionApi` `1.2`, you depend on
+  `1.2`. An extension that does not need the host network can stay on `1.0`, and one that fetches only text can stay on
+  `1.1`; the host keeps previous contract versions loadable.
 - The dependency **must be `compileOnly`**, never `implementation`. The host provides the `:novel-api` classes at
   runtime. If your APK bundled its own copy of `app.novel.source.api.NovelSource`, the host's class loader would see
   two distinct `NovelSource` classes, `is NovelSource` would be false, and your source would never load.
@@ -103,7 +103,7 @@ Nothing of yours is instantiated until it has passed a fixed, ordered gate. In o
 There is no path that instantiates a third-party class before steps 1–3. Your code runs only after the user has
 granted trust, exactly as with a manga extension.
 
-## 5. Networking (contract `1.1`)
+## 5. Networking (contract `1.2`)
 
 An extension ships no HTTP client. The host owns the socket, the timeouts and the `User-Agent`, and hands you the
 response body; you keep the part that is actually about the site — the selectors and the parsing.
@@ -129,6 +129,10 @@ class MyNovelSource : NetworkedNovelSource {
 
 - `NovelNetwork.fetch(url, headers = emptyMap())` returns the body as text. It **throws** when the request fails or
   the response is not successful, so `""` always means a genuinely empty page, never a failure.
+- `NovelNetwork.fetchBytes(url, headers = emptyMap())` returns the body as a raw `ByteArray`, for a body that is not
+  text — a PDF, an image, a zip. `fetch` decodes the bytes as text before you ever see them, which corrupts a binary
+  body, so a binary download must go through `fetchBytes`. It carries the same guarantee: it **throws** on a transport
+  failure or a non-2xx response, so an empty array always means a genuinely empty body, never a failure.
 - The network is injected through `bindNetwork`, called by the host right after it constructs your class and before
   it is registered. There is no constructor parameter because the host instantiates your class by reflection with a
   no-argument constructor.
@@ -137,8 +141,8 @@ class MyNovelSource : NetworkedNovelSource {
 - An extension that does not implement `NetworkedNovelSource` is left untouched and may keep bringing its own HTTP
   stack.
 
-Declaring `app.novel.extensionApi` `1.1` in your manifest is what says you require this capability. The host still
-loads `1.0` extensions.
+Declaring `app.novel.extensionApi` `1.2` in your manifest is what says you require this capability. The host still
+loads `1.0` and `1.1` extensions.
 
 Only `NovelNetwork` and `NetworkedNovelSource` cross the `NovelSource` boundary. Anything you bundle for parsing
 (for example Jsoup) must never appear in a `NovelSource` method signature, or the host's class loader will see two

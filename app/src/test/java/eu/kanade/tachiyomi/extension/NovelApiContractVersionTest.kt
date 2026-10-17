@@ -30,10 +30,11 @@ class NovelApiContractVersionTest {
     }
 
     /**
-     * Acceptance criterion 2 / decision D3. The host network was added at 1.1, additively, but an
-     * extension already installed at 1.0 must keep loading — otherwise adding a capability silently
-     * unloads every extension a user already has. The previous version therefore stays in the list
-     * beside the current one.
+     * Acceptance criterion 2 / decision D3. Each capability so far was added additively — the host
+     * network at 1.1, the byte fetch at 1.2 — but an extension already installed at an earlier version
+     * must keep loading, otherwise adding a capability silently unloads every extension a user already
+     * has. Every superseded version therefore stays in the list beside the current one. This covers
+     * each one, so the guarantee is pinned for the version the current raise just superseded too.
      */
     @Test
     fun `the loader still accepts the previous contract version`() {
@@ -41,6 +42,11 @@ class NovelApiContractVersionTest {
             1.0 in SUPPORTED_NOVEL_API_VERSIONS,
             "The loader runs only $SUPPORTED_NOVEL_API_VERSIONS, so a 1.0 extension would stop loading. " +
                 "Keep 1.0 in SUPPORTED_NOVEL_API_VERSIONS when raising the contract additively.",
+        )
+        assertTrue(
+            1.1 in SUPPORTED_NOVEL_API_VERSIONS,
+            "The loader runs only $SUPPORTED_NOVEL_API_VERSIONS, so a 1.1 extension would stop loading. " +
+                "Keep 1.1 in SUPPORTED_NOVEL_API_VERSIONS when raising the contract additively.",
         )
     }
 

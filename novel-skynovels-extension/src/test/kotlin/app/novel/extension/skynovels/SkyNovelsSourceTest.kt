@@ -19,6 +19,11 @@ class SkyNovelsSourceTest {
     private class StubNetwork(private val responses: Map<String, String>) : NovelNetwork {
         override suspend fun fetch(url: String, headers: Map<String, String>): String =
             responses[url] ?: throw IllegalStateException("No stubbed response for $url")
+
+        // SkyNovels is text-only and never calls fetchBytes; throwing makes a future byte fetch in this
+        // source fail loudly here instead of silently returning fabricated bytes.
+        override suspend fun fetchBytes(url: String, headers: Map<String, String>): ByteArray =
+            throw UnsupportedOperationException("SkyNovels does not fetch bytes")
     }
 
     private fun source(responses: Map<String, String> = emptyMap()): SkyNovelsSource =

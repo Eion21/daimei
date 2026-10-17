@@ -621,10 +621,12 @@ internal const val METADATA_NOVEL_API_VERSION = "app.novel.extensionApi"
  * own list under its own key, so an incompatible change to `:novel-api` can raise this version without that being a
  * manga extension change. Built the same way: whatever is listed here is what the loader accepts.
  *
- * 1.0 stays in the list beside 1.1 because the network capability was added additively (decision D3): an extension
- * already installed at 1.0 must keep loading. Only remove a version when an apk built against it no longer links.
+ * Every earlier version stays in the list beside the current one because each raise has been additive (decision D3):
+ * the host network at 1.1 and the byte fetch at 1.2 were both added beside what already existed, so an extension
+ * already installed at 1.0 or 1.1 must keep loading. Only remove a version when an apk built against it no longer
+ * links.
  */
-internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0, 1.1)
+internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0, 1.1, 1.2)
 
 /** The two kinds of extension apk this app can load. */
 internal enum class ExtensionKind { MANGA, NOVEL }

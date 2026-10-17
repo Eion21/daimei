@@ -10,6 +10,7 @@ import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -59,6 +60,31 @@ class HostNovelNetworkTest {
         }
     }
 
+    /**
+     * The one assertion that defends `fetchBytes` from being reimplemented on top of the text path.
+     * A `body.string()` decode turns every byte here that is not valid UTF-8 into U+FFFD, so the
+     * served bytes and the returned bytes differ the moment `.string()` replaces `.bytes()`. This is
+     * the whole reason `fetchBytes` exists: a PDF is a binary body, and a text round-trip corrupts it.
+     */
+    @Test
+    fun `fetchBytes returns the served bytes unchanged, including non-UTF-8 bytes`() {
+        val bytes = byteArrayOf(0x00, 0xFF.toByte(), 0xFE.toByte(), 0x80.toByte(), 0x41)
+        val network = networkReturning(responseBytes(200, bytes))
+
+        val body = runBlocking { network.fetchBytes("http://example.com/book.pdf") }
+
+        assertArrayEquals(bytes, body)
+    }
+
+    @Test
+    fun `fetchBytes throws on a non-2xx response instead of returning an empty array`() {
+        val network = networkReturning(responseBytes(404, byteArrayOf(1, 2, 3)))
+
+        assertThrows(IOException::class.java) {
+            runBlocking { network.fetchBytes("http://example.com/missing.pdf") }
+        }
+    }
+
     private fun networkReturning(response: Response): HostNovelNetwork {
         val call = mockk<Call>()
         every { call.execute() } returns response
@@ -73,5 +99,13 @@ class HostNovelNetworkTest {
         .code(code)
         .message("test")
         .body(ResponseBody.create(null, body.toByteArray()))
+        .build()
+
+    private fun responseBytes(code: Int, body: ByteArray): Response = Response.Builder()
+        .request(Request.Builder().url("http://example.com/book.pdf").build())
+        .protocol(Protocol.HTTP_1_1)
+        .code(code)
+        .message("test")
+        .body(ResponseBody.create(null, body))
         .build()
 }

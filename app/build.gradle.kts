@@ -7,6 +7,12 @@ import mihon.gradle.getLatestCommitCount
 import mihon.gradle.getLatestCommitSha
 import mihon.gradle.getLatestCommitTime
 import mihon.gradle.tasks.ReplaceShortcutsPlaceholderTask
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 import java.io.FileInputStream
 import java.util.Properties
 
@@ -31,6 +37,44 @@ if (Config.includeTelemetry) {
 
 val keystorePropertiesFile = layout.settingsDirectory.file("keystore.properties").asFile
 
+/**
+ * Stages the fixture module's apk as `<package>.ext` for the androidTest assets.
+ *
+ * It has an `@OutputDirectory` because it is wired through the Variant API's `addGeneratedSourceDirectory`, which
+ * needs a `DirectoryProperty` to hand to AGP. `fixtureApk` is derived from the settings directory rather than from
+ * a cross-project model: with Isolated Projects on, `project(":novel-fixture-unregistered-extension")` at
+ * configuration time is rejected, and the `dependsOn` on the producing task's path string is what still orders the
+ * build (AGP's SourceSet API cannot take a Provider, so the task dependency cannot be carried by `assets.srcDir`).
+ */
+abstract class CopyFixtureExtensionExt : DefaultTask() {
+    @get:InputFile
+    abstract val fixtureApk: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun action() {
+        outputDir.get().file("app.novel.extension.fixture.unregistered.ext").asFile.apply {
+            parentFile.mkdirs()
+            fixtureApk.get().asFile.copyTo(this, overwrite = true)
+        }
+    }
+}
+
+val copyFixtureExtensionExt = tasks.register<CopyFixtureExtensionExt>("copyFixtureExtensionExt") {
+    dependsOn(":novel-fixture-unregistered-extension:assembleDebug")
+
+    fixtureApk.set(
+        layout.settingsDirectory.file(
+            "novel-fixture-unregistered-extension/build/outputs/apk/debug/" +
+                "novel-fixture-unregistered-extension-debug.apk",
+        ),
+    )
+
+    outputDir.set(layout.buildDirectory.dir("fixture-extension-assets"))
+}
+
 android {
     namespace = "eu.kanade.tachiyomi"
 
@@ -44,6 +88,11 @@ android {
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Each instrumented test runs in its own process (see testOptions.execution below) with the app's data
+        // cleared first: the context proof and the PdfBox proof cannot share a process, because PdfBox's static
+        // resource-loader state is process-wide and a poisoned initializer would take the other test down with it.
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
     }
 
     if (System.getenv("MIHON_GITHUB_RELEASE").toBoolean()) {
@@ -121,6 +170,12 @@ android {
     sourceSets {
         getByName("nightly").res.directories.add("src/debug/res")
         getByName("benchmark").res.directories.add("src/debug/res")
+    }
+
+    testOptions {
+        // Run every instrumented test in its own process. PdfBox's static state is process-wide, so a single
+        // process cannot run the negative (context) test and the positive (PdfBox) test safely.
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
     }
 
     splits {
@@ -334,6 +389,17 @@ dependencies {
     testImplementation(libs.bundles.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 
+    // Instrumented tests: the contract-1.3 context proof. They run on a device, because createPackageContext,
+    // PackageManager and PdfBox are all Android-only and cannot be exercised on a plain JVM.
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    // runBlocking drives the loader's suspend entry point from the test.
+    androidTestImplementation(libs.kotlinx.coroutines.core)
+    // The positive test extracts text out of a bundled PDF, so PdfBox and its glyph-table assets ship in the
+    // test apk (not in :app: the host must not bundle PdfBox on behalf of extensions).
+    androidTestImplementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    androidTestUtil(libs.androidx.test.orchestrator)
+
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakCanary.android)
     implementation(libs.leakCanary.plumber)
@@ -448,6 +514,13 @@ androidComponents {
             shortcutsFile.set(projectDir.resolve("src/main/shortcuts.xml"))
         }
         resSource.addGeneratedSourceDirectory(replaceShortcutsPlaceholderTask) { it.outputDir }
+    }
+
+    onVariants { variant ->
+        // Adds the unregistered fixture apk (as `*.ext`) to this variant's androidTest assets. The Variant API is
+        // the only supported route: `assets.srcDir(<provider>)` on the SourceSet API is rejected outright by AGP.
+        // It goes on the androidTest component, never on the host app's own assets.
+        variant.androidTest?.sources?.assets?.addGeneratedSourceDirectory(copyFixtureExtensionExt) { it.outputDir }
     }
 
     onVariants(selector().withFlavor("default" to "standard")) {

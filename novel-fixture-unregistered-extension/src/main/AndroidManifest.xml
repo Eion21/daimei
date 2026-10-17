@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Marks this apk as a novel extension, the flag the host loader filters on. -->
+    <uses-feature android:name="app.novel.extension" />
+
+    <application android:label="Unregistered fixture (extension)">
+
+        <!-- The one source class, named exactly as the loader instantiates it. -->
+        <meta-data
+            android:name="app.novel.extension.class"
+            android:value="app.novel.extension.fixture.unregistered.UnregisteredFixtureSource" />
+
+        <!--
+          Contract 1.3: the version that added the optional Context. The fixture declares it and implements
+          ContextAwareNovelSource, so a loaded fixture would demand a context — and the `.ext` path has none to give.
+        -->
+        <meta-data
+            android:name="app.novel.extensionApi"
+            android:value="1.3" />
+
+    </application>
+
+</manifest>

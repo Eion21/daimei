@@ -13,13 +13,15 @@ import app.novel.source.api.NovelPage
  * are worth stating:
  *
  * - **A document that is empty, foreign or merely odd is not an error.** The catalogue that carries no
- *   `<obra>` element parses to an empty page, a JSON document of the wrong shape reads as no data, and
- *   an entry with a damaged value is skipped — the rest of the document is still worth having. The one
- *   thing that *is* an error is a document that stops mid-way, because then the answer would be a short
- *   catalogue silently mistaken for the whole one.
+ *   `<obra>` element parses to an empty page, a JSON document of the wrong shape reads as no data, and a
+ *   row with a damaged value is skipped — the rest of the document is still worth having. Three shapes
+ *   *are* errors, each because the silent answer would be a lie: a document that stops mid-way (a short
+ *   catalogue taken for the whole one), a catalogue whose every obra was discarded (a library that looks
+ *   as if it lost its novels), and a chapter list whose chapters sit under a key that is not the work's
+ *   (they would be filed, with their progress and downloads, under the wrong novel).
  * - **Nothing here builds a URL.** `obras.xml` covers are paths relative to the library root and a
- *   chapter's address is the file name the list gives; which repository serves them is the source's
- *   concern (T6), and this layer records what the file says.
+ *   chapter is addressed by the work plus the file name the list gives; the full, percent-encoded PDF
+ *   address is assembled in one place, [JabraScanUrls], and only when the bytes are requested (T6).
  */
 internal object JabraScanParsing {
 
@@ -49,20 +51,47 @@ internal object JabraScanParsing {
     /**
      * The catalogue: one [Novel] per obra whose `visible` is not `no`, in the file's own order.
      *
-     * The catalogue is the whole library — 48 of its 49 obras are visible — so it never pages.
+     * The catalogue is the whole library — 48 of its 49 obras are visible — so it never pages. This is
+     * [parseCatalogueReport]'s page without its discards, for callers that do not need them.
      */
-    fun parseCatalogue(xml: String): NovelPage =
-        NovelPage(obras(xml).filter(Obra::visible).map(Obra::toNovel), hasNextPage = false)
+    fun parseCatalogue(xml: String): NovelPage = parseCatalogueReport(xml).page
+
+    /**
+     * The catalogue and the obras it could not use, each with the reason it was dropped.
+     *
+     * An obra with no `clave` has nothing to address it by and one with no non-empty `nombreobra` has
+     * nothing to render, so both are left out — but the reader is entitled to know the catalogue shrank,
+     * so the discards are returned rather than swallowed. This layer stays pure, so the caller (the
+     * downloading layer) is the one that logs them.
+     *
+     * A catalogue whose every obra was discarded is not an empty catalogue but a broken one, and it
+     * fails loudly: the reader would otherwise see a library that lost its novels. A document with no
+     * `<obra>` at all is still a normal empty page, because then nothing was lost.
+     */
+    fun parseCatalogueReport(xml: String): CatalogueResult {
+        val scan = readCatalogue(xml)
+        if (scan.obras.isEmpty() && scan.discarded.isNotEmpty()) {
+            error(
+                "$CATALOGUE_DOCUMENT: all ${scan.discarded.size} <obra> were discarded " +
+                    "(${discardSummary(scan.discarded)}), so this is a broken catalogue, not an empty one",
+            )
+        }
+        return CatalogueResult(
+            page = NovelPage(scan.obras.filter(Obra::visible).map(Obra::toNovel), hasNextPage = false),
+            discarded = scan.discarded,
+        )
+    }
 
     /**
      * The work's own entry, merged into what the host already holds.
      *
      * A work the catalogue does not carry is returned as it arrived rather than blanked, and `visible`
      * is deliberately not consulted: a novel the reader already has stays readable after the site drops
-     * it from the front page.
+     * it from the front page. Neither is the all-discarded failure raised here: this reads one obra by
+     * `clave` and has nothing to say about the catalogue as a whole.
      */
     fun parseNovelDetails(xml: String, novel: Novel): Novel {
-        val obra = obras(xml).firstOrNull { it.clave == novel.id } ?: return novel
+        val obra = readCatalogue(xml).obras.firstOrNull { it.clave == novel.id } ?: return novel
         return novel.copy(
             title = obra.title,
             author = obra.author ?: novel.author,
@@ -106,13 +135,16 @@ internal object JabraScanParsing {
      * `books/{clave}.json`: the work's chapters in the order the file lists them, which is the order
      * they were published in.
      *
-     * The chapter's id and url are both the file name the list gives; the host turns it into the PDF
-     * address, and the format does not state it (T6).
+     * Only the array under the work's own `clave` is read; a document that carries an array under some
+     * other key is refused rather than borrowed, because saving another work's chapters — with their
+     * progress and downloads — under this novel is worse than an error. The chapter's id is the stable,
+     * unencoded pair of the work and the file name the row gives; the PDF address is built later, in
+     * [JabraScanUrls].
      */
     fun parseChapterList(json: String, novel: Novel): List<Chapter> {
         val document = "books/${novel.id}.json"
         val root = JabraScanJson.asObject(JabraScanJson.parse(json, document)) ?: return emptyList()
-        return chapters(root, novel.id).mapNotNull { chapter(it, novel) }
+        return chapters(root, novel.id, document).mapNotNull { chapter(it, novel) }
     }
 
     /**
@@ -123,33 +155,67 @@ internal object JabraScanParsing {
 
     // ---- The catalogue -------------------------------------------------------------------------
 
-    private fun obras(xml: String): List<Obra> =
-        JabraScanXml.elements(xml, OBRA, CATALOGUE_DOCUMENT).mapNotNull(::obra)
-
     /**
-     * One `<obra>` element: the fields the reader is shown, with the elements the format does not
-     * define ignored.
+     * One pass over the catalogue's `<obra>` elements: the obras the reader can use, and the ones it
+     * cannot, each with the reason it was left out.
      *
-     * An obra with no `clave` is nothing to address it by and one with no `nombreobra` is nothing to
-     * render, so both are left out. `visible` is kept as written, and only a literal `no` hides the
-     * obra: a missing value is a document that does not say, not a site that said no.
+     * An obra's fields are the ones the reader is shown, with the elements the format does not define
+     * ignored. `visible` is kept as written, and only a literal `no` hides the obra: a missing value is
+     * a document that does not say, not a site that said no. Hiding is not discarding — a hidden obra
+     * still parses and is filtered later — so it never appears among the discards.
      */
-    private fun obra(body: String): Obra? {
-        val clave = text(body, CLAVE) ?: return null
-        val title = JabraScanXml.elements(body, TITLE, CATALOGUE_DOCUMENT)
-            .map(JabraScanXml::text)
-            .map(::normalize)
-            .firstOrNull(String::isNotEmpty) ?: return null
-        return Obra(
-            clave = clave,
-            visible = text(body, VISIBLE)?.equals(HIDDEN, ignoreCase = true) != true,
-            title = title,
-            author = text(body, AUTHOR),
-            // The sinopsis is the prose; `meta` is the one-line fallback the same file carries.
-            description = text(body, SYNOPSIS) ?: text(body, SUMMARY),
-            coverUrl = text(body, COVER),
-        )
+    private fun readCatalogue(xml: String): CatalogueScan {
+        val obras = mutableListOf<Obra>()
+        val discarded = mutableListOf<DiscardedObra>()
+        for (body in JabraScanXml.elements(xml, OBRA, CATALOGUE_DOCUMENT)) {
+            val clave = text(body, CLAVE)
+            if (clave == null) {
+                discarded += DiscardedObra(clave = null, reason = DiscardReason.MISSING_CLAVE)
+                continue
+            }
+            val title = JabraScanXml.elements(body, TITLE, CATALOGUE_DOCUMENT)
+                .map(JabraScanXml::text)
+                .map(::normalize)
+                .firstOrNull(String::isNotEmpty)
+            if (title == null) {
+                discarded += DiscardedObra(clave = clave, reason = DiscardReason.MISSING_TITLE)
+                continue
+            }
+            obras += Obra(
+                clave = clave,
+                visible = text(body, VISIBLE)?.equals(HIDDEN, ignoreCase = true) != true,
+                title = title,
+                author = text(body, AUTHOR),
+                // The sinopsis is the prose; `meta` is the one-line fallback the same file carries.
+                description = text(body, SYNOPSIS) ?: text(body, SUMMARY),
+                coverUrl = text(body, COVER),
+            )
+        }
+        return CatalogueScan(obras, discarded)
     }
+
+    private data class CatalogueScan(val obras: List<Obra>, val discarded: List<DiscardedObra>)
+
+    /** A compact log-ready count of the reasons, for the all-discarded failure message. */
+    private fun discardSummary(discarded: List<DiscardedObra>): String =
+        discarded.groupingBy(DiscardedObra::reason).eachCount()
+            .entries.joinToString(", ") { "${it.value} × ${it.key}" }
+
+    /** The catalogue's page and the obras it dropped. */
+    internal data class CatalogueResult(val page: NovelPage, val discarded: List<DiscardedObra>)
+
+    /** One `<obra>` the catalogue could not use: its `clave` when it has one, and why it was dropped. */
+    internal data class DiscardedObra(val clave: String?, val reason: DiscardReason) {
+        /** The reason as one line, for the downloading layer to log. */
+        fun describe(): String = when (reason) {
+            DiscardReason.MISSING_CLAVE -> "obra dropped: no <clave>, so it cannot be addressed"
+            DiscardReason.MISSING_TITLE ->
+                "obra \"$clave\" dropped: no non-empty <nombreobra>, so there is nothing to render"
+        }
+    }
+
+    /** Why an obra was left out of the catalogue. */
+    internal enum class DiscardReason { MISSING_CLAVE, MISSING_TITLE }
 
     /** The folded text of the element's first body, or null when the element is absent or empty. */
     private fun text(body: String, tag: String): String? =
@@ -172,24 +238,37 @@ internal object JabraScanParsing {
     // ---- The chapter list ----------------------------------------------------------------------
 
     /**
-     * The chapter array: the one under the work's own clave, or, when the document holds a single array,
-     * that one — the same list under a key that does not match the clave is still this work's list.
+     * The chapter array: the one under the work's own `clave`, and nothing else.
+     *
+     * A clave that is present but does not hold an array is a damaged document rather than a mix-up, so
+     * it reads as no chapters. A clave that is absent while another key holds an array is the dangerous
+     * case — reading it would file a different work's chapters under this one — and it fails, naming
+     * both the work and the key that was found.
      */
-    private fun chapters(root: Map<String, Any?>, clave: String): List<Any?> =
-        JabraScanJson.asArray(root[clave])
-            ?: JabraScanJson.asArray(root.values.singleOrNull())
-            ?: emptyList()
+    private fun chapters(root: Map<String, Any?>, clave: String, document: String): List<Any?> {
+        if (root.containsKey(clave)) return JabraScanJson.asArray(root[clave]) ?: emptyList()
+        val elsewhere = root.keys.filter { JabraScanJson.asArray(root[it]) != null }
+        if (elsewhere.isEmpty()) return emptyList()
+        error(
+            "$document: no chapters under \"$clave\", but ${elsewhere.joinToString { "\"$it\"" }} holds an " +
+                "array; it is not read as this work's list",
+        )
+    }
 
     /**
      * One chapter row. A row with no file name has no address and is dropped; a row with no number or
      * no title is still readable, so it is kept with what the file does say.
+     *
+     * The id is the stable key the reader stores — the work and the file name, unencoded — so it does
+     * not move when the address scheme does. The url stays the bare file name the list gives; the full
+     * address is assembled, encoded, only in [JabraScanUrls] when the PDF is requested.
      */
     private fun chapter(value: Any?, novel: Novel): Chapter? {
         val row = JabraScanJson.asObject(value) ?: return null
         val file = row.text(FILE) ?: return null
         val number = JabraScanJson.asFloat(row[NUMBER])
         val title = row.text(CHAPTER_TITLE) ?: row.text(NUMBER)?.let { "Capítulo $it" } ?: file
-        return Chapter(SOURCE_ID, novel.id, file, title, number, file)
+        return Chapter(SOURCE_ID, novel.id, "${novel.id}/$file", title, number, file)
     }
 
     private fun Map<String, Any?>.text(key: String): String? =

@@ -88,6 +88,19 @@ internal object TestFixtures {
     /** A catalogue with no obras in it. */
     val CATALOGUE_EMPTY = "<obras></obras>"
 
+    /** Every obra is unusable — one with no clave, one with no title — so the catalogue is broken. */
+    val CATALOGUE_ALL_DISCARDED = """
+<obras>
+<obra>
+<nombreobra>Sin clave</nombreobra>
+</obra>
+<obra>
+<clave>SinTitulo</clave>
+<visible>si</visible>
+</obra>
+</obras>
+"""
+
     /** What the host gets back when the request never reached the catalogue. */
     val NOT_A_CATALOGUE = """<!doctype html><html><body><h1>502 Bad Gateway</h1></body></html>"""
 
@@ -117,7 +130,10 @@ internal object TestFixtures {
     /** A work whose chapters were removed. */
     val CHAPTERS_EMPTY = """{"TorreDeCristal":[]}"""
 
-    /** One array under a key that is not the clave: still the chapters of the work being read. */
+    /**
+     * One array under a key that is not the clave. Refused, because it may be another work's list and
+     * filing it under this work would carry the wrong progress and downloads.
+     */
     val CHAPTERS_UNDER_ANOTHER_KEY =
         """{"OtroNombre":[{"NombreArchivo":"TorreDeCristal-0001.0v01.pdf","numCapitulo":"1"}]}"""
 

@@ -61,6 +61,23 @@ class JabraScanXmlTest {
     }
 
     @Test
+    fun `a lone less-than in the prose survives instead of eating up to the next greater-than`() {
+        val text = JabraScanXml.text("<![CDATA[Puntúa <3 y comprueba que a < b, si c > d.]]>")
+
+        assertEquals("Puntúa <3 y comprueba que a < b, si c > d.", text)
+    }
+
+    @Test
+    fun `the intentional HTML link in a CDATA sinopsis is stripped as a tag`() {
+        val text = JabraScanXml.text(
+            "<![CDATA[Ver <a href=\"https://frizcosas.blogspot.com/2024/05/argonauta.html\" " +
+                "target=\"_blank\">Turret Translations</a>]]>",
+        )
+
+        assertEquals("Ver Turret Translations", text)
+    }
+
+    @Test
     fun `a CDATA section that is never closed fails`() {
         assertThrows(IllegalStateException::class.java) { JabraScanXml.text("<![CDATA[sin cierre") }
     }

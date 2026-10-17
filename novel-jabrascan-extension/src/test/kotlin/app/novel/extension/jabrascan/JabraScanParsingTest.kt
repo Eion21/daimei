@@ -56,6 +56,20 @@ class JabraScanParsingTest {
     }
 
     @Test
+    fun `the visible-no skip is deliberate so the catalogue hides the obra while the detail still serves it`() {
+        val page = JabraScanParsing.parseCatalogue(TestFixtures.CATALOGUE)
+        // An obra the site marks hidden stays out of the catalogue...
+        assertTrue(page.novels.none { it.id == "ObraOculta" })
+
+        // ...but a reader who already has it keeps seeing it, because the detail ignores `visible`.
+        val hidden = Novel(sourceId = "jabrascan", id = "ObraOculta", title = "Título provisional")
+        val details = JabraScanParsing.parseNovelDetails(TestFixtures.CATALOGUE, hidden)
+
+        assertEquals("Obra oculta", details.title)
+        assertEquals("Autor Dos", details.author)
+    }
+
+    @Test
     fun `a document that is not a catalogue reads as an empty page`() {
         assertTrue(JabraScanParsing.parseCatalogue(TestFixtures.NOT_A_CATALOGUE).novels.isEmpty())
         assertTrue(JabraScanParsing.parseCatalogue(TestFixtures.CATALOGUE_EMPTY).novels.isEmpty())
@@ -68,6 +82,41 @@ class JabraScanParsingTest {
         }
 
         assertTrue(failure.message!!.contains("obras.xml"), failure.message)
+    }
+
+    @Test
+    fun `the catalogue reports each discarded obra and the reason`() {
+        val report = JabraScanParsing.parseCatalogueReport(TestFixtures.CATALOGUE_DAMAGED)
+
+        assertEquals(listOf("SinVisible"), report.page.novels.map { it.id })
+        assertEquals(
+            listOf(
+                JabraScanParsing.DiscardReason.MISSING_CLAVE,
+                JabraScanParsing.DiscardReason.MISSING_TITLE,
+            ),
+            report.discarded.map { it.reason },
+        )
+        // The clave of the one that had it is kept, so a log line can name the obra.
+        assertEquals(listOf(null, "SinTitulo"), report.discarded.map { it.clave })
+        assertTrue(report.discarded.all { it.describe().isNotBlank() })
+    }
+
+    @Test
+    fun `a catalogue whose every obra was discarded fails loudly instead of reading as empty`() {
+        val failure = assertThrows(IllegalStateException::class.java) {
+            JabraScanParsing.parseCatalogue(TestFixtures.CATALOGUE_ALL_DISCARDED)
+        }
+
+        assertTrue(failure.message!!.contains("obras.xml"), failure.message)
+        assertTrue(failure.message!!.contains("2"), failure.message)
+    }
+
+    @Test
+    fun `a catalogue with no obras at all stays a normal empty page`() {
+        val report = JabraScanParsing.parseCatalogueReport(TestFixtures.CATALOGUE_EMPTY)
+
+        assertTrue(report.page.novels.isEmpty())
+        assertTrue(report.discarded.isEmpty())
     }
 
     @Test
@@ -136,20 +185,27 @@ class JabraScanParsingTest {
     }
 
     @Test
-    fun `the chapter list keeps the file order and takes id and url from the file name`() {
+    fun `the chapter list keeps the file order and takes a stable id and the bare file name`() {
         val chapters = JabraScanParsing.parseChapterList(TestFixtures.CHAPTERS, novel("TorreDeCristal"))
 
         assertEquals(3, chapters.size)
+        assertEquals(
+            listOf(
+                "TorreDeCristal/TorreDeCristal-0000.0v01_TorreDeCristal.pdf",
+                "TorreDeCristal/TorreDeCristal-0001.1v01_TorreDeCristal.pdf",
+                "TorreDeCristal/TorreDeCristal-0002.0v02_TorreDeCristal.pdf",
+            ),
+            chapters.map { it.id },
+        )
+        // The id is the stable work+file key; the url is the bare file name, encoded only at request time.
         assertEquals(
             listOf(
                 "TorreDeCristal-0000.0v01_TorreDeCristal.pdf",
                 "TorreDeCristal-0001.1v01_TorreDeCristal.pdf",
                 "TorreDeCristal-0002.0v02_TorreDeCristal.pdf",
             ),
-            chapters.map { it.id },
+            chapters.map { it.url },
         )
-        // The file name is the id and the url: the host resolves the repository root, the format does not.
-        assertEquals(chapters.map { it.id }, chapters.map { it.url })
         assertEquals(listOf("Prólogo", "Capítulo \"El pacto\"", "Capítulo 2"), chapters.map { it.title })
         assertEquals(listOf(0f, 1.1f, 2f), chapters.map { it.number })
         assertTrue(chapters.all { it.sourceId == "jabrascan" && it.novelId == "TorreDeCristal" })
@@ -172,7 +228,7 @@ class JabraScanParsingTest {
         val chapters =
             JabraScanParsing.parseChapterList(TestFixtures.CHAPTERS_WITH_DAMAGED_ROW, novel("TorreDeCristal"))
 
-        assertEquals(listOf("buena.pdf"), chapters.map { it.id })
+        assertEquals(listOf("TorreDeCristal/buena.pdf"), chapters.map { it.id })
     }
 
     @Test
@@ -184,14 +240,14 @@ class JabraScanParsingTest {
     }
 
     @Test
-    fun `a chapter list under another key is still this work's list`() {
-        val chapters = JabraScanParsing.parseChapterList(
-            TestFixtures.CHAPTERS_UNDER_ANOTHER_KEY,
-            novel("TorreDeCristal"),
-        )
+    fun `a chapter list under another key is refused rather than filed under this work`() {
+        val failure = assertThrows(IllegalStateException::class.java) {
+            JabraScanParsing.parseChapterList(TestFixtures.CHAPTERS_UNDER_ANOTHER_KEY, novel("TorreDeCristal"))
+        }
 
-        assertEquals(listOf("TorreDeCristal-0001.0v01.pdf"), chapters.map { it.id })
-        assertTrue(chapters.all { it.novelId == "TorreDeCristal" })
+        // Both keys are named, so the mismatch is visible in the failure.
+        assertTrue(failure.message!!.contains("TorreDeCristal"), failure.message)
+        assertTrue(failure.message!!.contains("OtroNombre"), failure.message)
     }
 
     @Test

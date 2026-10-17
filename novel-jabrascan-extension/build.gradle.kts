@@ -10,6 +10,10 @@ android {
         applicationId = "app.novel.extension.jabrascan"
         versionCode = 1
         versionName = "1.0.0"
+
+        // This module ships an instrumented test (the PdfBox end-to-end proof). The base
+        // convention does not set a runner, so it is declared here, as in :novel-pdf-spike.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 }
 
@@ -19,14 +23,19 @@ android {
 // to link with `LinkageError: ... resolves differently in interface`, naming two different Continuation classes.
 // The standard library is compile-time only here for exactly the same reason :novel-api is.
 //
-// The exclusion is scoped to the app RuntimeClasspath — the one the APK is packaged from — and NOT to the
-// `*UnitTestRuntimeClasspath`. A Kotlin test class cannot even be *discovered* without the standard library (JUnit
-// resolves `kotlin.coroutines.Continuation` in a `suspend` signature and dies with NoClassDefFoundError), so
-// excluding from the test runtime would make the required `testDebugUnitTest` un-runnable. No test configuration
-// feeds the APK, so keeping the standard library there does not package anything the host owns: the extension APK
-// still ships no stdlib and no coroutines.
+// The exclusion is scoped to the app RuntimeClasspath — the one the APK is packaged from — and NOT to
+// the test runtime classpaths (`*UnitTestRuntimeClasspath`, `*AndroidTestRuntimeClasspath`). A Kotlin
+// test class cannot even be *discovered* without the standard library (JUnit resolves
+// `kotlin.coroutines.Continuation` in a `suspend` signature and dies with NoClassDefFoundError), so
+// excluding from the test runtimes would make the required `testDebugUnitTest` and
+// `connectedDebugAndroidTest` un-runnable. No test configuration feeds the APK, so keeping the standard
+// library there does not package anything the host owns: the extension APK still ships no stdlib and no
+// coroutines.
 configurations.configureEach {
-    if (isCanBeResolved && name.endsWith("RuntimeClasspath") && !name.endsWith("UnitTestRuntimeClasspath")) {
+    if (isCanBeResolved && name.endsWith("RuntimeClasspath") &&
+        !name.endsWith("UnitTestRuntimeClasspath") &&
+        !name.endsWith("AndroidTestRuntimeClasspath")
+    ) {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
         exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
     }
@@ -88,4 +97,15 @@ dependencies {
 
     // The source methods are `suspend`, so the tests drive them through `runBlocking`.
     testImplementation(libs.kotlinx.coroutines.core)
+
+    // The instrumented test proves the PDF path on a device: PdfBox is Android-only and its glyph
+    // tables live in assets, so this cannot be a JVM test. The androidx test runner and the contract
+    // types go on the test apk, and the PDF asset is this module's own copy under androidTest/assets.
+    // The same fixture ships in app and in novel-pdf-spike, and a test asserts all three copies stay
+    // byte-identical. These are test-only and never reach the extension apk.
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(projects.novelApi)
+    // runBlocking drives the source's suspend `extract` from the instrumented test.
+    androidTestImplementation(libs.kotlinx.coroutines.core)
 }

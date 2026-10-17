@@ -147,3 +147,41 @@ loads `1.0` and `1.1` extensions.
 Only `NovelNetwork` and `NetworkedNovelSource` cross the `NovelSource` boundary. Anything you bundle for parsing
 (for example Jsoup) must never appear in a `NovelSource` method signature, or the host's class loader will see two
 different copies of it.
+
+## 6. Android context (contract `1.3`)
+
+Some libraries need an Android `Context` to reach resources bundled in your APK — PdfBox, for example, reads its
+built-in fonts and character maps through `context.getApplicationContext().getAssets()`. An extension that needs one
+implements `ContextAwareNovelSource` from `app.novel:novel-api-android` as well as `NovelSource`:
+
+```kotlin
+dependencies {
+    compileOnly("app.novel:novel-api:1.3")
+    compileOnly("app.novel:novel-api-android:1.3")
+}
+
+class MyNovelSource : ContextAwareNovelSource {
+    private lateinit var context: Context
+
+    override fun bindContext(context: Context) {
+        this.context = context
+    }
+
+    // ... the rest of NovelSource
+}
+```
+
+- The context is **your own package's**, created for your APK with `createPackageContext`. It exposes your resources
+  and assets and none of the host's files, preferences, or databases, so you cannot reach into the app that loaded you.
+- It arrives through `bindContext`, called right after the host constructs your class and before it is registered — the
+  same way `bindNetwork` works. A no-argument constructor is still required.
+- `app.novel:novel-api-android` must be `compileOnly` too. The host provides the interface at runtime; an APK that
+  bundled its own copy would fail the host's `is ContextAwareNovelSource` check and silently never receive a context.
+- **A private `.ext` extension that needs a context will not load — by design.** A private extension is loaded from a
+  file and is never registered with `PackageManager`, so the host cannot create a context for it. Rather than load it
+  and fail later inside the library that wanted the context, the host refuses it with the reason
+  **`ContextUnavailable`**. Test such an extension as a normal signed APK instead — `adb install` it, or run the
+  module's `installDebug` — so the host has a package to build a context from.
+
+Contract `1.3` is what declares this capability, through `app.novel.extensionApi` `1.3` in your manifest. Extensions
+built against `1.0`, `1.1`, or `1.2` are untouched by it and keep loading exactly as before.

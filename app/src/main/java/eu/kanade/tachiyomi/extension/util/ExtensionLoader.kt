@@ -522,11 +522,11 @@ internal object ExtensionLoader {
                         val extensionContext = try {
                             ExtensionPackageContext(context.createPackageContext(pkgName, 0))
                         } catch (e: Exception) {
-                            logcat(LogPriority.ERROR, e) { "Extension load error: $extName ($pkgName)" }
-                            return notLoaded(
-                                Extension.NotLoaded.Reason.Failed(e.rootMessage, e.stackTraceToString()),
-                                libVersion,
-                            )
+                            logcat(LogPriority.ERROR, e) {
+                                "Extension $extName ($pkgName) needs an Android context, and the host could not " +
+                                    "create one for this apk"
+                            }
+                            return notLoaded(contextUnavailableReason(), libVersion)
                         }
                         obj.bindContext(extensionContext)
                     }
@@ -733,6 +733,21 @@ internal fun decideExtensionGate(
     !contentWarningAllowed -> ExtensionGateDecision.FILTERED
     else -> ExtensionGateDecision.ALLOWED
 }
+
+/**
+ * The reason a context-capable extension is reported with when the host could not create a context for it.
+ *
+ * Contract: a context failure is reported as [Extension.NotLoaded.Reason.ContextUnavailable] and never as the generic
+ * [Extension.NotLoaded.Reason.Failed]. `Failed` means the extension's own code threw while loading; a context the host
+ * could not create is a finding about the apk, and it needs its own message and its own fix. Keeping the mapping in one
+ * reachable function is what stops the two from quietly merging back together.
+ *
+ * Nothing about the failure rides on the reason, which is why it takes no parameter: what `createPackageContext` threw
+ * — `NameNotFoundException` for an apk the host never registered, most importantly a private `.ext` file — does not
+ * change the fix, and [Extension.NotLoaded.Reason.ContextUnavailable] carries no message of its own.
+ */
+internal fun contextUnavailableReason(): Extension.NotLoaded.Reason =
+    Extension.NotLoaded.Reason.ContextUnavailable
 
 /**
  * The message of the deepest cause, which is the one that actually says what went wrong.

@@ -3,11 +3,13 @@ package eu.kanade.tachiyomi.extension
 import app.novel.source.api.NOVEL_API_VERSION
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.util.ExtensionGateDecision
+import eu.kanade.tachiyomi.extension.util.contextUnavailableReason
 import eu.kanade.tachiyomi.extension.util.decideExtensionGate
 import eu.kanade.tachiyomi.extension.util.isSupportedNovelApiVersion
 import mihon.domain.extension.model.ContentWarning
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -79,5 +81,19 @@ class ExtensionGateCompatibilityTest {
         assertEquals("app.novel.unsupported", installed.pkgName)
         assertEquals(Extension.NotLoaded.Reason.UnsupportedLibVersion, rejected.reason)
         assertFalse(rejected.reason is Extension.NotLoaded.Reason.Failed)
+    }
+
+    @Test
+    fun `a context the host could not create is reported as ContextUnavailable, not Failed`() {
+        // A private .ext extension that implements ContextAwareNovelSource is refused by design: it is never
+        // registered with PackageManager, so createPackageContext throws NameNotFoundException and there is no
+        // context to hand over. This calls the real mapping the loader's catch uses. The refusal must name itself: it
+        // must not collapse into the generic Failed (which means the extension's own code threw) nor into
+        // UnsupportedLibVersion (a different cause with a different fix), so a regression cannot quietly merge them.
+        val reason = contextUnavailableReason()
+
+        assertEquals(Extension.NotLoaded.Reason.ContextUnavailable, reason)
+        assertFalse(reason is Extension.NotLoaded.Reason.Failed)
+        assertNotEquals(Extension.NotLoaded.Reason.UnsupportedLibVersion, reason)
     }
 }

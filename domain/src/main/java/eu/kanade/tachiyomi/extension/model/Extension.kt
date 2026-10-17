@@ -134,6 +134,13 @@ sealed interface Extension {
             /** Required package metadata is missing. */
             data object Malformed : Reason
 
+            /**
+             * Implements the Android context capability, but the host couldn't create a context for it. A private
+             * `.ext` extension is loaded from a file and never registered with the system, so no package context can
+             * be created for it and there is no context to hand over.
+             */
+            data object ContextUnavailable : Reason
+
             /** Threw while its classes or sources were being instantiated. */
             data class Failed(val message: String, val stackTrace: String) : Reason
         }

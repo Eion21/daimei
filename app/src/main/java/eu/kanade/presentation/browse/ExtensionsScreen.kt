@@ -554,6 +554,7 @@ private val Extension.NotLoaded.Reason.labelRes: StringResource?
         // The section header already says these aren't loaded; the dialog says why
         Extension.NotLoaded.Reason.Unsigned,
         Extension.NotLoaded.Reason.UnsupportedLibVersion,
+        Extension.NotLoaded.Reason.ContextUnavailable,
         Extension.NotLoaded.Reason.Malformed,
         is Extension.NotLoaded.Reason.Failed,
         -> null
@@ -565,6 +566,7 @@ private val Extension.NotLoaded.Reason.descriptionRes: StringResource
         Extension.NotLoaded.Reason.Filtered -> MR.strings.ext_filtered_message
         Extension.NotLoaded.Reason.Unsigned -> MR.strings.ext_unsigned_message
         Extension.NotLoaded.Reason.UnsupportedLibVersion -> MR.strings.ext_unsupported_message
+        Extension.NotLoaded.Reason.ContextUnavailable -> MR.strings.ext_context_unavailable_message
         Extension.NotLoaded.Reason.Malformed -> MR.strings.ext_malformed_message
         is Extension.NotLoaded.Reason.Failed -> MR.strings.ext_load_failed_message
     }

@@ -28,7 +28,12 @@ import java.io.File
  *
  * This test exercises the real host wrapper (it is `internal` to `:app`, hence the test lives here) against a real
  * package context built the same way the loader builds it, then proves the consequence: a specific Spanish sentence
- * from a real jabrascan.net PDF comes out with its accents intact.
+ * from the repository's own synthetic `synthetic_spanish_novel.pdf` comes out with its accents intact.
+ *
+ * The fixture is self-authored and lives in `app/src/androidTest/assets`. It replaces the third-party
+ * `t_Arifureta.pdf` sample, which is no longer tracked by git and must not be depended on; the
+ * `synthetic_spanish_novel.pdf` copies in `app`, `novel-pdf-spike` and `novel-jabrascan-extension` are byte-identical
+ * (a JVM test in `novel-jabrascan-extension` pins that).
  */
 @RunWith(AndroidJUnit4::class)
 class ExtensionPackageContextPdfBoxTest {
@@ -63,7 +68,10 @@ class ExtensionPackageContextPdfBoxTest {
 
         PDFBoxResourceLoader.init(wrapped)
 
-        val pdf = copyTestAsset("t_Arifureta.pdf", File(target.cacheDir, "context-contract-pdf").apply { mkdirs() })
+        val pdf = copyTestAsset(
+            "synthetic_spanish_novel.pdf",
+            File(target.cacheDir, "context-contract-pdf").apply { mkdirs() },
+        )
         val text = PDDocument.load(pdf).use { document ->
             PDFTextStripper().apply { sortByPosition = true }.getText(document)
         }
@@ -87,8 +95,8 @@ class ExtensionPackageContextPdfBoxTest {
     private companion object {
         const val TAG = "ContextContract"
 
-        // The first sentence of t_Arifureta.pdf, kept verbatim (three accented words: rápidamente, desvaneció,
-        // comenzó). Compared after whitespace is collapsed so line wrapping cannot break the match.
-        const val EXPECTED_SENTENCE = "La luz rápidamente se desvaneció cuando la oscuridad comenzó a tragarlo"
+        // The opening sentence of the synthetic fixture, kept verbatim (four accented words: señora, jardín,
+        // mañana, pájaros). Compared after whitespace is collapsed so line wrapping cannot break the match.
+        const val EXPECTED_SENTENCE = "La señora del jardín anotaba cada mañana los nombres de los pájaros"
     }
 }

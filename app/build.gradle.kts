@@ -217,6 +217,7 @@ dependencies {
     implementation(projects.data)
     implementation(projects.domain)
     implementation(projects.novelApi)
+    implementation(projects.novelApiAndroid)
     implementation(projects.novelRuntime)
     implementation(projects.novelDemoSource)
     implementation(projects.novelHttpSource)

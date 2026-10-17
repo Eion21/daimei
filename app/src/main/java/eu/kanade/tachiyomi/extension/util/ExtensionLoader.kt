@@ -9,6 +9,7 @@ import androidx.core.content.pm.PackageInfoCompat
 import app.novel.source.api.NetworkedNovelSource
 import app.novel.source.api.NovelNetwork
 import app.novel.source.api.NovelSource
+import app.novel.source.api.android.ContextAwareNovelSource
 import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.source.Source
@@ -490,6 +491,46 @@ internal object ExtensionLoader {
                         obj.bindNetwork(network)
                     }
 
+                    // A novel extension that needs the Android context declares ContextAwareNovelSource, which the host
+                    // detects with `is` against its own copy of the interface. The interface ships on the host
+                    // classpath, so an extension must depend on :novel-api-android as compileOnly; an apk that bundled
+                    // its own copy would implement a different class, be missed by `is`, and silently never receive a
+                    // context. Detect that and name it here, rather than letting it surface later as an unexplained
+                    // null far from its cause. The extension still loads — only its optional context is missing — so
+                    // this reports instead of rejecting: rejection is for a load that cannot work at all.
+                    val declaredContextInterface = try {
+                        Class.forName(ContextAwareNovelSource::class.java.name, false, classLoader)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    if (declaredContextInterface != null &&
+                        declaredContextInterface !== ContextAwareNovelSource::class.java
+                    ) {
+                        logcat(LogPriority.ERROR) {
+                            "Extension $extName ($pkgName) bundles its own copy of the context interface; " +
+                                "the host will not inject a context. Depend on :novel-api-android as compileOnly."
+                        }
+                    }
+
+                    // Bound here beside bindNetwork, and for the same reason: after construction and before the object
+                    // is wrapped, returned and registered. The context is the extension's own package, never the host's,
+                    // so an extension cannot reach into the app that loaded it, and the wrapper makes it usable by a
+                    // library that asks for the application context (PdfBox among them). Injected only when the
+                    // extension asks for it: a 1.0–1.2 apk, or one that does not implement the interface, is left
+                    // exactly as it is, the same way bindNetwork leaves it.
+                    if (obj is ContextAwareNovelSource) {
+                        val extensionContext = try {
+                            ExtensionPackageContext(context.createPackageContext(pkgName, 0))
+                        } catch (e: Exception) {
+                            logcat(LogPriority.ERROR, e) { "Extension load error: $extName ($pkgName)" }
+                            return notLoaded(
+                                Extension.NotLoaded.Reason.Failed(e.rootMessage, e.stackTraceToString()),
+                                libVersion,
+                            )
+                        }
+                        obj.bindContext(extensionContext)
+                    }
+
                     when (obj) {
                         // A novel extension declares a NovelSource, which is neither a Source nor a SourceFactory.
                         // The adapter turns it into the Source everything downstream already consumes, and it is
@@ -622,11 +663,11 @@ internal const val METADATA_NOVEL_API_VERSION = "app.novel.extensionApi"
  * manga extension change. Built the same way: whatever is listed here is what the loader accepts.
  *
  * Every earlier version stays in the list beside the current one because each raise has been additive (decision D3):
- * the host network at 1.1 and the byte fetch at 1.2 were both added beside what already existed, so an extension
- * already installed at 1.0 or 1.1 must keep loading. Only remove a version when an apk built against it no longer
- * links.
+ * the host network at 1.1, the byte fetch at 1.2, and the optional Android context at 1.3 were all added beside what
+ * already existed, so an extension already installed at 1.0, 1.1, or 1.2 must keep loading. Only remove a version
+ * when an apk built against it no longer links.
  */
-internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0, 1.1, 1.2)
+internal val SUPPORTED_NOVEL_API_VERSIONS = listOf(1.0, 1.1, 1.2, 1.3)
 
 /** The two kinds of extension apk this app can load. */
 internal enum class ExtensionKind { MANGA, NOVEL }

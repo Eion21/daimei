@@ -73,7 +73,10 @@ class PdfExtractionTest {
                         "  $strategy: chars=${s.chars} words=${s.words} lines=${s.lines} " +
                             "paragraphs=${s.paragraphs}\n",
                     )
-                    Log.i(TAG, "$id $strategy chars=${s.chars} words=${s.words} lines=${s.lines} paragraphs=${s.paragraphs}")
+                    Log.i(
+                        TAG,
+                        "$id $strategy chars=${s.chars} words=${s.words} lines=${s.lines} paragraphs=${s.paragraphs}",
+                    )
                 }
 
                 // --- timing: TIMING_RUNS independent load+extract cycles (strategy b) ---
@@ -90,7 +93,9 @@ class PdfExtractionTest {
                     val tag = if (run == 1) "first (cold)" else "warm #$run"
                     timing.append(
                         "  run $run [$tag]: load=%.2f ms extract=%.2f ms chars=%d\n".format(
-                            loadMs, extractMs, extracted.length,
+                            loadMs,
+                            extractMs,
+                            extracted.length,
                         ),
                     )
                     Log.i(TAG, "$id run$run load=%.2f ms extract=%.2f ms".format(loadMs, extractMs))

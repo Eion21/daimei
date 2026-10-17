@@ -43,7 +43,9 @@ class HostNovelNetwork(
         }
     }
 
-    override suspend fun fetchBytes(url: String, headers: Map<String, String>): ByteArray = withContext(Dispatchers.IO) {
+    override suspend fun fetchBytes(url: String, headers: Map<String, String>): ByteArray = withContext(
+        Dispatchers.IO,
+    ) {
         client.newCall(requestFor(url, headers)).execute().use { response ->
             response.requireSuccessful(url)
             // `.bytes()` returns the body's bytes untouched. `.string()` must never be used here: it
@@ -66,7 +68,7 @@ class HostNovelNetwork(
     /** The single place a non-2xx response is turned into the failure both fetches promise to throw. */
     private fun Response.requireSuccessful(url: String) {
         if (!isSuccessful) {
-            throw IOException("HTTP ${code} fetching $url")
+            throw IOException("HTTP $code fetching $url")
         }
     }
 

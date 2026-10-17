@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Marks this APK as a novel extension. The host loader looks for this
+      feature (mirroring Mihon's `tachiyomi.extension`) to tell a novel
+      extension package apart from an ordinary app.
+    -->
+    <uses-feature android:name="app.novel.extension" />
+
+    <application android:label="JabraScan (extension)">
+
+        <!--
+          Fully-qualified names of the classes implementing
+          app.novel.source.api.NovelSource, ';'-separated. The loader
+          instantiates each via reflection after the host-ownership/signature
+          checks pass. Mirrors Mihon's `tachiyomi.extension.class`.
+
+          JabraScanSource implements NetworkedNovelSource, so the host binds
+          it the host network before it is registered.
+        -->
+        <meta-data
+            android:name="app.novel.extension.class"
+            android:value="app.novel.extension.jabrascan.JabraScanSource" />
+
+        <!--
+          Contract version this extension was built against. Mirrors Mihon's
+          `tachiyomix.extensionLib`; the loader rejects unsupported versions.
+          1.2 because JabraScanSource needs the host's `fetchBytes` to get a
+          chapter PDF as bytes; the 1.1 text `fetch` would decode it as text
+          and destroy it.
+        -->
+        <meta-data
+            android:name="app.novel.extensionApi"
+            android:value="1.2" />
+
+    </application>
+
+</manifest>

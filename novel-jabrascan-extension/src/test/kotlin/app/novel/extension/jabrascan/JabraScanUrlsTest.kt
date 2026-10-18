@@ -4,8 +4,13 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
- * The single PDF-address builder, on real shapes: an ordinary Arifureta file name, and a
- * MadamePleaseBehave file name, which carries a space, a comma and accents.
+ * The single PDF-address builder, on real shapes: an ordinary Arifureta file name, a
+ * MadamePleaseBehave file name, which carries a space, a comma and accents, and the fold past
+ * chapter 999 — which is the site's rule and applies to every root.
+ *
+ * One measured work breaks the fold: `MyCollegeTeacherMyChildrenMom` keeps its repository folder
+ * unfolded for its 33 rows past 999, so the folded address 404s (the work 404s on the site too).
+ * The rule is not special-cased for it; the tests below pin both the rule and that exception.
  */
 class JabraScanUrlsTest {
 
@@ -48,6 +53,49 @@ class JabraScanUrlsTest {
         assertEquals(
             "https://jabrascan.net/books/MadamePleaseBehave/x.pdf",
             JabraScanUrls.chapterPdfUrl("https://jabrascan.net/", "MadamePleaseBehave", "x.pdf", 1f),
+        )
+    }
+
+    @Test
+    fun `past chapter 999 the folder folds on every root, repository and site alike`() {
+        // Measured: ShadowSlave 1031 and CultivationOnline 1000 serve from the folded folder on their
+        // roots (folded 200 / unfolded 404), so the fold belongs to the address, not to one root.
+        assertEquals(
+            "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io-pdfs/main/" +
+                "books/ShadowSlave1/ShadowSlave-1031.pdf",
+            JabraScanUrls.chapterPdfUrl(
+                JabraScanUrls.PDF_REPOSITORY,
+                "ShadowSlave",
+                "ShadowSlave-1031.pdf",
+                1031f,
+            ),
+        )
+        assertEquals(
+            "https://jabrascan.net/books/CultivationOnline1/CultivationOnline-1000.pdf",
+            JabraScanUrls.chapterPdfUrl(
+                JabraScanUrls.SITE,
+                "CultivationOnline",
+                "CultivationOnline-1000.pdf",
+                1000f,
+            ),
+        )
+    }
+
+    @Test
+    fun `the known fold exception is MyCollegeTeacherMyChildrenMom, whose repository folder is flat`() {
+        // This work's 33 rows past 999 live under the bare clave, so the folded address this builder
+        // produces 404s. The host turns that into `HTTP 404 fetching <url>` (HostNovelNetwork), so the
+        // attempted address is named in the failure. No fallback and no per-work table: the fold is
+        // what the site's own reader uses and what the other measured works serve.
+        assertEquals(
+            "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io-pdfs/main/" +
+                "books/MyCollegeTeacherMyChildrenMom1/MyCollegeTeacherMyChildrenMom-1030.pdf",
+            JabraScanUrls.chapterPdfUrl(
+                JabraScanUrls.PDF_REPOSITORY,
+                "MyCollegeTeacherMyChildrenMom",
+                "MyCollegeTeacherMyChildrenMom-1030.pdf",
+                1030f,
+            ),
         )
     }
 }

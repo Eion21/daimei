@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -74,6 +75,68 @@ class JabraScanPdfInstrumentedTest {
             !text.contains(RUNNING_HEADER),
         )
     }
+
+    /**
+     * Characterisation, not a wish: `synthetic_spanish_novel.pdf` is written by the spike's generator as
+     * **seven** prose paragraphs, but the extractor returns **four** blocks, and four is the correct
+     * behaviour *today* — it was four before the paragraph-threshold change landed, and it is four after.
+     *
+     * Neither the threshold nor a bug explains the gap. The fixture separates its paragraphs with either
+     * an ordinary ~14.9 pt leading or a real ~44.7 pt paragraph gap, both comfortably on their own side of
+     * the old and the new threshold. The cause is the rule [JabraScanPdfLayout] applies on purpose: **a
+     * page change is not a paragraph break**, so a paragraph that runs off the bottom of a page continues
+     * on the next one. A new paragraph whose first line sits at the top of a page therefore loses the
+     * extra paragraph space the generator draws above a paragraph's first line and looks exactly like a
+     * continuation, so it merges into the block before it.
+     *
+     * The generator's paragraphs that begin at a page top are what the assertions below pin down — not
+     * only the total, but which starts merged: `Un día el viento …` merges with `¡Qué extraño …` across
+     * the page 2 -> 3 boundary, and `La señora cerró la libreta …`, `Hay historias …` and `Así termina …`
+     * come out as one block across the page 3 -> 4 and 4 -> 5 boundaries. Seven paragraphs in, four
+     * blocks out.
+     */
+    @Test
+    fun syntheticFixtureYieldsFourBlocksPageTopStartsMerge() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val bytes = instrumentation.context.assets.open(PDF_ASSET).use { it.readBytes() }
+
+        // The same end-to-end extraction the class's other test drives, so this characterises the
+        // production path and not a re-implementation of it.
+        val blocks = JabraScanPdf.extract(bytes).map { it.text.replace(Regex("\\s+"), " ") }
+
+        assertEquals(
+            "the fixture's page-top paragraph starts merge, so the extractor returns fewer blocks " +
+                "than the generator's paragraphs; got ${blocks.size}: ${blocks.joinToString(" | ")}",
+            4,
+            blocks.size,
+        )
+
+        // Page 2 -> 3: the generator opens a paragraph at the top of page 3, so it merges with the
+        // paragraph that ended page 2.
+        val pageTwoToThree = blockContaining(blocks, "Un día el viento arrancó la última hoja")
+        assertTrue(
+            "«Un día el viento …» (end of page 2) must share a block with «¡Qué extraño …» " +
+                "(top of page 3); got: $pageTwoToThree",
+            pageTwoToThree.contains("¡Qué extraño resultaba todo!"),
+        )
+
+        // Pages 3 -> 4 -> 5: three generator paragraphs that each open at a page top collapse into one
+        // block.
+        val pagesThreeToFive = blockContaining(blocks, "La señora cerró la libreta")
+        assertTrue(
+            "the page-3 paragraph must also carry the page-4 paragraph; got: $pagesThreeToFive",
+            pagesThreeToFive.contains("Hay historias que solo se entienden al final"),
+        )
+        assertTrue(
+            "the same block must also carry the page-5 paragraph; got: $pagesThreeToFive",
+            pagesThreeToFive.contains("Así termina este cuaderno de pruebas"),
+        )
+    }
+
+    /** The block whose text contains [phrase], or a failure naming what was actually extracted. */
+    private fun blockContaining(blocks: List<String>, phrase: String): String =
+        blocks.firstOrNull { it.contains(phrase) }
+            ?: error("no block contains «$phrase»; got: ${blocks.joinToString(" | ")}")
 
     private companion object {
         /** The repo's own synthetic asset (novel-pdf-spike/src/androidTest/assets), reused, not copied. */

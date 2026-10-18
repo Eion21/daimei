@@ -18,6 +18,13 @@
 -keep,allowoptimization class uy.kohesive.injekt.** { public protected *; }
 -keep,allowoptimization class com.squareup.zstd.** { public protected *; }
 
+# Keep the novel-source contract. Extensions implement these types and the host loads them from
+# outside its own dex, so R8 cannot see any implementation and would otherwise drop the whole
+# contract (measured: release lost NetworkedNovelSource and every extension failed to load with
+# ClassNotFoundException). Mirrors source-api/consumer-proguard.pro for eu.kanade.tachiyomi.source.**
+-keep class app.novel.source.api.** { public *; protected *; }
+-keep class app.novel.source.api.android.** { public *; protected *; }
+
 -keepclassmembers class * implements java.io.Serializable {
     java.lang.Object writeReplace();
     java.lang.Object readResolve();

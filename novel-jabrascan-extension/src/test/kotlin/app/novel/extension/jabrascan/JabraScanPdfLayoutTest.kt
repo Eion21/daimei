@@ -22,7 +22,7 @@ class JabraScanPdfLayoutTest {
 
         assertEquals(
             listOf("El faro parpadeaba sobre el acantilado cada madrugada"),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
@@ -30,21 +30,21 @@ class JabraScanPdfLayoutTest {
     fun `a word split across lines is sewn back without its hyphen`() {
         val lines = listOf(line("Fue algo extraordi-", 100f), line("nario de ver", 112f))
 
-        assertEquals(listOf("Fue algo extraordinario de ver"), JabraScanPdfLayout.reconstruct(lines))
+        assertEquals(listOf("Fue algo extraordinario de ver"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
     }
 
     @Test
     fun `a soft hyphen left at a line break is removed too`() {
         val lines = listOf(line("extraordi\u00AD", 100f), line("nario", 112f))
 
-        assertEquals(listOf("extraordinario"), JabraScanPdfLayout.reconstruct(lines))
+        assertEquals(listOf("extraordinario"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
     }
 
     @Test
     fun `a line-final hyphen before a capital stays a dash`() {
         val lines = listOf(line("Se fue-", 100f), line("Regresó", 112f))
 
-        assertEquals(listOf("Se fue- Regresó"), JabraScanPdfLayout.reconstruct(lines))
+        assertEquals(listOf("Se fue- Regresó"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
     }
 
     @Test
@@ -58,7 +58,7 @@ class JabraScanPdfLayoutTest {
             line("13", 760f, page = 1),
         )
 
-        assertEquals(listOf("El pacto se selló entre dos reinos"), JabraScanPdfLayout.reconstruct(lines))
+        assertEquals(listOf("El pacto se selló entre dos reinos"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
     }
 
     @Test
@@ -71,7 +71,7 @@ class JabraScanPdfLayoutTest {
             line("cinco", 212f),
         )
 
-        assertEquals(listOf("Uno dos tres", "Cuatro cinco"), JabraScanPdfLayout.reconstruct(lines))
+        assertEquals(listOf("Uno dos tres", "Cuatro cinco"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
     }
 
     @Test
@@ -85,20 +85,20 @@ class JabraScanPdfLayoutTest {
 
         assertEquals(
             listOf("La historia continúa al otro lado del papel"),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
     @Test
     fun `no lines read as no paragraphs`() {
-        assertEquals(emptyList<String>(), JabraScanPdfLayout.reconstruct(emptyList()))
+        assertEquals(emptyList<String>(), JabraScanPdfLayout.reconstruct(emptyList()).paragraphs)
     }
 
     @Test
     fun `a single line is a single paragraph`() {
         val lines = listOf(line("Solo una línea", 100f))
 
-        assertEquals(listOf("Solo una línea"), JabraScanPdfLayout.reconstruct(lines))
+        assertEquals(listOf("Solo una línea"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
     }
 
     private fun line(text: String, baseline: Float, page: Int = 0) = ExtractedLine(text, baseline, page)

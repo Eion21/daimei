@@ -13,21 +13,21 @@ import org.junit.jupiter.api.Test
  * page — and asserted through the paragraphs a reader would see, never through internals.
  *
  * The prose is invented here; no third-party novel text is used. A paragraph break is a gap strictly
- * greater than 1.32x the leading, so with a 10.0 pt leading the threshold sits at 13.2 pt and the two
- * measured extremes are 12.6 pt (1.26x, never a break) and 13.8 pt (1.38x, always one).
+ * greater than 1.29x the leading, so with a 10.0 pt leading the threshold sits at 12.9 pt and the two
+ * measured ends of the interval are 12.0 pt (1.20x, never a break) and 13.8 pt (1.38x, always one).
  */
 class JabraScanPdfLeadingTest {
 
     @Test
-    fun `a gap of 1 point 26 times the leading does not start a paragraph`() {
-        // Gaps of 10.0 pt fix the leading at 10.0 (mode bucket 100) and the threshold at 13.2 pt.
-        // The last gap is 12.6 pt: 1.26x the leading, the largest real intra-paragraph gap measured.
+    fun `a gap of 1 point 20 times the leading does not start a paragraph`() {
+        // Gaps of 10.0 pt fix the leading at 10.0 (mode bucket 100) and the threshold at 12.9 pt.
+        // The last gap is 12.0 pt: 1.20x the leading, the largest real intra-paragraph gap measured.
         val lines = listOf(
             line("The lighthouse keeper", 0f),
             line("climbed the iron stair", 10f),
             line("before the storm", 20f),
             line("and lit the lamp", 30f),
-            line("just as the first wave", 42.6f),
+            line("just as the first wave", 42f),
         )
 
         assertEquals(
@@ -35,13 +35,13 @@ class JabraScanPdfLeadingTest {
                 "The lighthouse keeper climbed the iron stair before the storm and lit the lamp " +
                     "just as the first wave",
             ),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
     @Test
     fun `a gap of 1 point 38 times the leading does start a paragraph`() {
-        // The same 10.0 pt leading, so the threshold is 13.2 pt; 13.8 pt is 1.38x, the tightest real break.
+        // The same 10.0 pt leading, so the threshold is 12.9 pt; 13.8 pt is 1.38x, the tightest real break.
         val lines = listOf(
             line("The lighthouse keeper", 0f),
             line("climbed the iron stair", 10f),
@@ -55,13 +55,13 @@ class JabraScanPdfLeadingTest {
                 "The lighthouse keeper climbed the iron stair before the storm and lit the lamp",
                 "Then the wind fell quiet",
             ),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
     @Test
     fun `short dialogue lines at ordinary leading stay one paragraph`() {
-        // Five lines, so four 10.0 pt gaps measure the leading; none exceeds the 13.2 pt threshold,
+        // Five lines, so four 10.0 pt gaps measure the leading; none exceeds the 12.9 pt threshold,
         // including the line that ends in a dialogue dash.
         val lines = listOf(
             line("—Are you leaving?", 0f),
@@ -76,13 +76,13 @@ class JabraScanPdfLeadingTest {
                 "—Are you leaving? —I have to, she said. —Then go,\u201d he whispered. " +
                     "—But I will wait— and she closed the door.",
             ),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
     @Test
     fun `lines separated by a real paragraph gap each come out as their own paragraph`() {
-        // Four 10.0 pt gaps fix the leading at 10.0 and the threshold at 13.2 pt; the 20.0 pt gaps that
+        // Four 10.0 pt gaps fix the leading at 10.0 and the threshold at 12.9 pt; the 20.0 pt gaps that
         // follow are real breaks, so each trailing line is a paragraph of its own and none merges.
         val lines = listOf(
             line("The first line of body text", 0f),
@@ -103,7 +103,7 @@ class JabraScanPdfLeadingTest {
                 "Another lone line",
                 "The last lone line",
             ),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
@@ -113,7 +113,7 @@ class JabraScanPdfLeadingTest {
 
         assertEquals(
             listOf((1..25).joinToString(" ") { "Line $it of the long paragraph" }),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
@@ -130,7 +130,7 @@ class JabraScanPdfLeadingTest {
 
         assertEquals(
             listOf("Only four lines here with a huge jump that would normally split but cannot be measured"),
-            JabraScanPdfLayout.reconstruct(lines),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }
 
@@ -146,7 +146,7 @@ class JabraScanPdfLeadingTest {
             line(prose, 300f),
         )
 
-        val paragraphs = JabraScanPdfLayout.reconstruct(lines)
+        val paragraphs = JabraScanPdfLayout.reconstruct(lines).paragraphs
 
         assertEquals(1, paragraphs.size, "fewer than four same-page gaps must not separate anything")
         val warnings = JabraScanParagraphWarnings.warnings(paragraphs)
@@ -158,23 +158,37 @@ class JabraScanPdfLeadingTest {
 
     @Test
     fun `a tie between gap buckets keeps the smaller leading`() {
-        // The gaps at or below the 12.0 median are 10, 10, 12, 12: buckets 100 and 120 tie at two members
-        // each. The smaller bucket, 10.0, must win, so the threshold is 13.2 pt and the final 14.0 pt gap
-        // breaks. Had the larger bucket won, the leading would be 12.0 and its 15.84 pt threshold would
-        // keep that 14.0 pt gap inside the paragraph.
-        val lines = listOf(
-            line("One", 0f),
-            line("two", 10f),
-            line("three", 20f),
-            line("four", 32f),
-            line("five", 44f),
-            line("Six", 58f),
-        )
+        // With twenty gaps the 10th-percentile index is 1, so the pool is everything at or below the
+        // second-smallest gap: a single 10.0 pt and a single 12.0 pt tie at one member each. The smaller
+        // bucket, 10.0, must win, so the threshold is 12.9 pt: the seventeen 12.5 pt ordinary gaps stay
+        // inside it and only the final 14.0 pt gap breaks. Had the larger bucket won, the leading would be
+        // 12.0 and its 15.48 pt threshold would keep that 14.0 pt gap in the paragraph.
+        val baselines = ArrayList<Float>(listOf(0f, 10f, 22f))
+        repeat(17) { baselines.add(baselines.last() + 12.5f) }
+        baselines.add(baselines.last() + 14f)
+        val lines = baselines.mapIndexed { i, baseline -> line("Line ${i + 1}", baseline) }
 
+        val expectedFirst = (1..20).joinToString(" ") { "Line $it" }
         assertEquals(
-            listOf("One two three four five", "Six"),
-            JabraScanPdfLayout.reconstruct(lines),
+            listOf(expectedFirst, "Line 21"),
+            JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
+    }
+
+    @Test
+    fun `many single-line paragraphs still find the ordinary leading`() {
+        // A chapter of single-line paragraphs: the paragraph-break pitch dominates the gap population,
+        // which is the shape that collapsed a real chapter under the old statistic. The ordinary leading
+        // survives in the wrapped lines, and it is what the p10-anchored mode must return.
+        val baselines = listOf(
+            0f, 10f, 30f, 40f, 60f, 70f, 90f, 100f, 120f, 140f, 160f, 180f, 200f,
+            220f, 240f, 260f, 280f, 300f, 320f, 340f, 360f,
+        )
+        val lines = baselines.mapIndexed { i, baseline -> line("Line ${i + 1}", baseline) }
+
+        val paragraphs = JabraScanPdfLayout.reconstruct(lines).paragraphs
+
+        assertEquals(17, paragraphs.size, "single-line paragraphs must not collapse the chapter into one")
     }
 
     private fun line(text: String, baseline: Float, page: Int = 0) = ExtractedLine(text, baseline, page)

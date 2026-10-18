@@ -87,7 +87,7 @@ internal object JabraScanPdf {
         val lines = PDDocument.load(bytes).use { document ->
             PdfLineStripper().apply { sortByPosition = true }.linesFrom(document)
         }
-        return JabraScanPdfLayout.reconstruct(lines)
+        return JabraScanPdfLayout.reconstruct(lines).paragraphs
     }
 }
 

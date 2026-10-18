@@ -14,6 +14,22 @@ import kotlin.math.roundToInt
 internal data class ExtractedLine(val text: String, val baseline: Float, val page: Int)
 
 /**
+ * What [JabraScanPdfLayout.reconstruct] found in a chapter's lines: the reader's paragraphs, the page's
+ * typical leading the split was made against, and whether that leading came from a statistic the layout
+ * does not trust.
+ *
+ * The leading and the flag are carried out of the pure reconstruction so the calling layer can reason
+ * about *how* a chapter was split and not only about what came out. [statisticUnreliable] is `false`
+ * today; the guard that can set it is not wired yet, and the field is here already so the shape a caller
+ * reads does not change again when that guard lands.
+ */
+internal data class ParagraphReconstruction(
+    val paragraphs: List<String>,
+    val leading: Float,
+    val statisticUnreliable: Boolean,
+)
+
+/**
  * The text-level half of PDF extraction: the lines an extractor found in, the paragraphs a reader sees
  * out.
  *
@@ -23,8 +39,8 @@ internal data class ExtractedLine(val text: String, val baseline: Float, val pag
  * - a line that opens or closes several pages is a running header or footer, not prose, and is dropped;
  * - two consecutive lines on the same page belong to the same paragraph unless the lower one sits more
  *   than [PARAGRAPH_GAP] times the page's typical leading below the other, where the leading is the mode
- *   of the same-page gaps that sit at or below their median (fewer than [MIN_LEADING_GAPS] same-page gaps
- *   make the leading unmeasurable, and then every line goes into one paragraph);
+ *   of the same-page gaps that sit at or below their 10th percentile (fewer than [MIN_LEADING_GAPS]
+ *   same-page gaps make the leading unmeasurable, and then every line goes into one paragraph);
  * - a page change on its own is *not* a paragraph break: a paragraph that runs off the bottom of a page
  *   continues on the next one;
  * - inside a paragraph the hard line breaks become single spaces, and a word hyphenated across two
@@ -44,12 +60,17 @@ internal object JabraScanPdfLayout {
     /**
      * A line starts a new paragraph below more than this many times the page's typical leading.
      *
-     * Calibrated on 14 real chapters: the largest intra-paragraph gap measured 1.26x the leading (chapter
-     * AbsoluteSwordSense) and the tightest real paragraph break 1.38x (chapter MushokuTensei), so `1.32`
-     * sits between the two with roughly 0.7 pt of margin below and 0.9 pt above at a ~15 pt leading. The
-     * old `1.5f` never reached a real break, while a lower factor would invent breaks inside paragraphs.
+     * Calibrated on 35 real files in total: the 14 calibration chapters, the 14 T7 chapters and the extra
+     * chapters of the works whose breaks had collapsed. The largest intra-paragraph gap that stayed noise
+     * measured 1.20x the leading (chapter CDMNQTMHC, ch.1) and the tightest real paragraph break 1.38x
+     * (chapter MushokuTensei), so `1.29` sits at the exact centre of the two.
+     *
+     * The ceiling carries a caveat worth writing down: it comes only from files whose labels are valid.
+     * The three chapters that had collapsed under the old leading (MeCaseConLaDragonaQueMate and
+     * TheDemonKingOverrun) do NOT measure a ceiling, because their one-line paragraphs are full width and
+     * the short-line oracle cannot label their gaps.
      */
-    private const val PARAGRAPH_GAP = 1.32f
+    private const val PARAGRAPH_GAP = 1.29f
 
     /**
      * Fewer same-page gaps than this and the page's leading is not measurable: [modeLeading] then returns
@@ -61,14 +82,15 @@ internal object JabraScanPdfLayout {
     private const val RUNNING_REPEATS = 2
 
     /**
-     * The paragraphs of [lines] in reading order, each a single flowing string.
+     * The paragraphs of [lines] in reading order, each a single flowing string, together with the leading
+     * they were split against in a [ParagraphReconstruction].
      *
      * An empty input, or an input that is nothing but headers, footers and page numbers, reads as no
-     * paragraphs rather than as one empty one.
+     * paragraphs rather than as one empty one, with an unmeasurable leading of `0f`.
      */
-    fun reconstruct(lines: List<ExtractedLine>): List<String> {
+    fun reconstruct(lines: List<ExtractedLine>): ParagraphReconstruction {
         val body = withoutFurniture(lines)
-        if (body.isEmpty()) return emptyList()
+        if (body.isEmpty()) return ParagraphReconstruction(emptyList(), 0f, statisticUnreliable = false)
 
         val leading = modeLeading(body)
         val paragraphs = ArrayList<String>()
@@ -81,7 +103,7 @@ internal object JabraScanPdfLayout {
             current.add(line)
         }
         paragraphs.add(join(current))
-        return paragraphs
+        return ParagraphReconstruction(paragraphs, leading, statisticUnreliable = false)
     }
 
     /** Drops blank lines, bare page numbers and running headers/footers, keeping the prose in order. */
@@ -111,13 +133,16 @@ internal object JabraScanPdfLayout {
 
     /**
      * The page's typical baseline-to-baseline distance: the mode of the same-page gaps that sit at or
-     * below their median.
+     * below their 10th percentile.
      *
-     * The median alone cannot carry this. In a chapter thick with dialogue, real paragraph breaks are a
-     * large fraction of all gaps, so the median itself drifts up to the break size, the threshold rises
-     * above every real break, and whole chapters collapse into a handful of blocks. Taking the mode of the
-     * gaps at or below the median pins the leading to the most common *ordinary* gap instead and ignores
-     * the breaks, which measured the leading correctly in 14 of 14 real chapters.
+     * The median cannot carry this, and neither could the mode of the gaps at or below the median. In a
+     * chapter thick with one-line paragraphs the paragraph-break pitch becomes the *majority* gap, so the
+     * median drifts up to the break size, the mode follows it, the threshold rises above every real
+     * break, and whole chapters collapse into a handful of blocks. Anchoring the pool at the 10th
+     * percentile instead keeps the mode on the small ordinary gaps the wrapped lines contribute: the break
+     * pitch, however dominant, is excluded from the pool and cannot set the leading. Measured on 35 real
+     * chapters, this recovered all three chapters the median-anchored rule had collapsed while leaving
+     * every other chapter's block count identical.
      *
      * Gaps are bucketed to 0.1 pt ([roundToInt]`(gap * 10)`) so near-identical leads land together. On a
      * tie between buckets the smaller bucket wins: an under-estimated leading only adds breaks, while an
@@ -134,11 +159,12 @@ internal object JabraScanPdfLayout {
             if (lines[i].page == lines[i - 1].page) gaps.add(abs(lines[i].baseline - lines[i - 1].baseline))
         }
         if (gaps.size < MIN_LEADING_GAPS) return 0f
-        val median = gaps.sorted()[gaps.size / 2]
+        val index = ((gaps.size * 0.1).toInt() - 1).coerceAtLeast(0)
+        val p10 = gaps.sorted()[index]
 
         val counts = HashMap<Int, Int>()
         for (gap in gaps) {
-            if (gap <= median) counts.merge((gap * 10f).roundToInt(), 1, Int::plus)
+            if (gap <= p10) counts.merge((gap * 10f).roundToInt(), 1, Int::plus)
         }
         // Iterate explicitly rather than `maxByOrNull`: a tie must resolve to the *smaller* bucket, and
         // the map's iteration order does not guarantee that on its own.

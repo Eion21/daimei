@@ -44,6 +44,7 @@ internal object JabraScanParsing {
     private const val FILE = "NombreArchivo"
     private const val NUMBER = "numCapitulo"
     private const val CHAPTER_TITLE = "nombreCapitulo"
+    private const val SERVER = "server"
 
     private val DIACRITICS = Regex("\\p{Mn}+")
     private val WHITESPACE = Regex("\\s+")
@@ -140,11 +141,35 @@ internal object JabraScanParsing {
      * progress and downloads — under this novel is worse than an error. The chapter's id is the stable,
      * unencoded pair of the work and the file name the row gives; the PDF address is built later, in
      * [JabraScanUrls].
+     *
+     * This is [parseChapterListReport]'s list alone, for callers that never need a row's `server`.
      */
-    fun parseChapterList(json: String, novel: Novel): List<Chapter> {
+    fun parseChapterList(json: String, novel: Novel): List<Chapter> = parseChapterListReport(json, novel).chapters
+
+    /**
+     * The work's chapters and, per file name, the `server` its row names — `null` when the row carries
+     * none.
+     *
+     * The list and the servers travel together because the root a chapter is downloaded from is a
+     * property of its own row, not of the work: `books/CDMNQTMHC.json` and `CultivationOnline` mix rows
+     * for the repository with rows for the site, so the source keeps the map while it reads the list and
+     * consults it when the bytes are requested. Reading it here, pure and without a network, keeps that
+     * decision off the request path and testable. A row's `server` is kept exactly as written (only
+     * trimmed): which values are usable is the source's decision, not this layer's, and an unknown one
+     * must survive so the source can keep the row instead of silently dropping it.
+     */
+    fun parseChapterListReport(json: String, novel: Novel): ChapterListResult {
         val document = "books/${novel.id}.json"
-        val root = JabraScanJson.asObject(JabraScanJson.parse(json, document)) ?: return emptyList()
-        return chapters(root, novel.id, document).mapNotNull { chapter(it, novel) }
+        val root = JabraScanJson.asObject(JabraScanJson.parse(json, document))
+            ?: return ChapterListResult(emptyList(), emptyMap())
+        val chapters = ArrayList<Chapter>()
+        val servers = LinkedHashMap<String, String?>()
+        for (value in chapters(root, novel.id, document)) {
+            val row = chapterRow(value, novel) ?: continue
+            chapters += row.chapter
+            servers[row.file] = row.server
+        }
+        return ChapterListResult(chapters, servers)
     }
 
     /**
@@ -237,6 +262,9 @@ internal object JabraScanParsing {
 
     // ---- The chapter list ----------------------------------------------------------------------
 
+    /** The work's chapters and the `server` each file's row names, or `null` when it names none. */
+    internal data class ChapterListResult(val chapters: List<Chapter>, val servers: Map<String, String?>)
+
     /**
      * The chapter array: the one under the work's own `clave`, and nothing else.
      *
@@ -256,20 +284,27 @@ internal object JabraScanParsing {
     }
 
     /**
-     * One chapter row. A row with no file name has no address and is dropped; a row with no number or
+     * One chapter row, with the file name kept twice: inside the [Chapter] identity and as the key of
+     * the server map. A row with no file name has no address and is dropped; a row with no number or
      * no title is still readable, so it is kept with what the file does say.
      *
      * The id is the stable key the reader stores — the work and the file name, unencoded — so it does
      * not move when the address scheme does. The url stays the bare file name the list gives; the full
      * address is assembled, encoded, only in [JabraScanUrls] when the PDF is requested.
      */
-    private fun chapter(value: Any?, novel: Novel): Chapter? {
+    private fun chapterRow(value: Any?, novel: Novel): ParsedChapter? {
         val row = JabraScanJson.asObject(value) ?: return null
         val file = row.text(FILE) ?: return null
         val number = JabraScanJson.asFloat(row[NUMBER])
         val title = row.text(CHAPTER_TITLE) ?: row.text(NUMBER)?.let { "Capítulo $it" } ?: file
-        return Chapter(SOURCE_ID, novel.id, "${novel.id}/$file", title, number, file)
+        return ParsedChapter(
+            chapter = Chapter(SOURCE_ID, novel.id, "${novel.id}/$file", title, number, file),
+            file = file,
+            server = row.text(SERVER),
+        )
     }
+
+    private data class ParsedChapter(val chapter: Chapter, val file: String, val server: String?)
 
     private fun Map<String, Any?>.text(key: String): String? =
         JabraScanJson.asString(this[key])?.trim()?.takeIf(String::isNotEmpty)

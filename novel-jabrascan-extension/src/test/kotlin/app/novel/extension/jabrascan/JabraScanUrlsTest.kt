@@ -12,9 +12,10 @@ class JabraScanUrlsTest {
     @Test
     fun `an ordinary real file name lands under the work's folder on the GitHub root`() {
         val url = JabraScanUrls.chapterPdfUrl(
-            JabraScanUrls.GITHUB_REPOSITORY,
+            JabraScanUrls.PDF_REPOSITORY,
             "Arifureta",
             "Arifureta-0000.0v01_JabraScan.pdf",
+            0f,
         )
 
         assertEquals(
@@ -29,9 +30,10 @@ class JabraScanUrlsTest {
         // MadamePleaseBehave publishes exactly this name (books/MadamePleaseBehave.json); the reader
         // must encode it rather than send the raw space, comma and accents to the HTTP layer.
         val url = JabraScanUrls.chapterPdfUrl(
-            JabraScanUrls.GITHUB_REPOSITORY,
+            JabraScanUrls.PDF_REPOSITORY,
             "MadamePleaseBehave",
             "Señora, por favor compórtese-001.pdf",
+            1f,
         )
 
         assertEquals(
@@ -45,7 +47,7 @@ class JabraScanUrlsTest {
     fun `a root with a trailing slash is not doubled`() {
         assertEquals(
             "https://jabrascan.net/books/MadamePleaseBehave/x.pdf",
-            JabraScanUrls.chapterPdfUrl("https://jabrascan.net/", "MadamePleaseBehave", "x.pdf"),
+            JabraScanUrls.chapterPdfUrl("https://jabrascan.net/", "MadamePleaseBehave", "x.pdf", 1f),
         )
     }
 }

@@ -8,9 +8,9 @@ import org.junit.jupiter.api.Test
  * LEFTOVER NAME, real tests — read this before keeping the file.
  *
  * This path held the one-off reality check that read the three real JabraScan samples from disk and checked the
- * numbers the parsers produced against the synthetic fixtures (48 visible obras, 49 index entries, 321 Arifureta
- * chapters, and their titles, numbers and cover paths). It ran, printed its findings, and was reverted in place
- * instead of deleted, because this sandbox forbids removing files — and a ktlint rule forbids an empty one.
+ * numbers the parsers produced against the synthetic fixtures and the real samples. It ran, printed its findings,
+ * and was reverted in place instead of deleted, because this sandbox forbids removing files — and a ktlint rule
+ * forbids an empty one.
  *
  * What is left are three catalogue edges the synthetic fixtures do not otherwise reach. They belong in
  * `JabraScanParsingTest`, next to the rest of the catalogue's cases; move them there and delete this file.

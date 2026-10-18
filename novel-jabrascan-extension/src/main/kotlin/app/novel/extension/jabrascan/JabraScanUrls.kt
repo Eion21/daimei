@@ -1,33 +1,64 @@
 package app.novel.extension.jabrascan
 
 /**
- * The one place a chapter's PDF address is assembled.
+ * The roots every JabraScan address hangs off, and the one place a chapter's PDF address is assembled.
  *
- * The site keeps each chapter PDF under `books/{clave}/{NombreArchivo}` on one of two roots — the
- * GitHub Pages repository ([GITHUB_REPOSITORY]) for the works whose rows say `io-pdfs` or say nothing,
- * and the site itself ([SITE]) for the two that publish their PDFs locally — and joins the parts with a
- * plain `encodeURIComponent` on the file name. The encoding is the point: a `NombreArchivo` reaches this
- * layer exactly as the list writes it, and a real one does carry a space, a comma and accents
- * (`Señora, por favor compórtese-001.pdf`), so handing it to the HTTP layer raw would break the request.
- * Reproducing the join here, with the encoding, keeps a single definition of what the address looks like
- * instead of one per call site.
+ * The library is spread over three roots, and each one came from a measured response rather than a guess:
  *
- * The root is the caller's to choose (T6 picks it from the row's `server`), so this object answers one
- * question: given a root and a work, what is the encoded address of that file? The site's extra rule for
- * chapters past 999 — the leading digits fold into the folder name — will land here too, when T6 needs
- * it, so that "one place" stays true.
+ * - **the content repository** ([CONTENT_REPOSITORY]) is JabraScan's own GitHub Pages repository
+ *   (`JabraScan/JabraScan.github.io`), served through `raw.githubusercontent.com`. Its `main` branch carries
+ *   the catalogue `obras.xml` and the chapter index `capitulos.json`;
+ * - **the PDF repository** ([PDF_REPOSITORY]) is the site's separate `JabraScan.github.io-pdfs` repository,
+ *   again through `raw.githubusercontent.com`. It carries each work's chapter list `books/{clave}.json` and
+ *   the chapter PDFs of every row whose `server` is absent or says `io-pdfs`;
+ * - **the site itself** ([SITE], `https://jabrascan.net`) serves the chapter PDFs of the rows whose `server`
+ *   says `local`.
+ *
+ * The root is the caller's to choose (the source picks it from the row's `server`), so this object answers
+ * one question: given a root, a work and a row, what is the encoded address of that row's file?
+ *
+ * Two rules make the address more than a join. The folder is not always the bare clave: past chapter 999
+ * the site folds the leading digits of the number into it (`1234` puts the file under `...1`), so the number
+ * is part of the address and is assembled here rather than at the call site. And the file name is one path
+ * segment that reaches this layer raw — a real one carries a space, a comma and accents
+ * (`Señora, por favor compórtese-001.pdf`) — so it is percent-encoded here instead of being handed to the
+ * HTTP layer, which would either send the raw space or encode the way `URLEncoder` does (`+` for a space,
+ * wrong for a path).
  */
 internal object JabraScanUrls {
 
-    /** The GitHub Pages repository the site serves most chapter PDFs from. */
-    const val GITHUB_REPOSITORY: String = "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io-pdfs/main"
+    /** The GitHub repository holding the catalogue `obras.xml` and the index `capitulos.json`. */
+    const val CONTENT_REPOSITORY: String = "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io/main"
+
+    /** The GitHub repository holding the chapter lists and most chapter PDFs. */
+    const val PDF_REPOSITORY: String = "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io-pdfs/main"
 
     /** The site itself, which serves the works whose rows carry `"server": "local"`. */
     const val SITE: String = "https://jabrascan.net"
 
-    /** `{root}/books/{clave}/{fileName}`, with [fileName] percent-encoded as a single path segment. */
-    fun chapterPdfUrl(repositoryRoot: String, clave: String, fileName: String): String =
-        repositoryRoot.trimEnd('/') + "/books/" + clave + "/" + encodePathSegment(fileName)
+    /** The last chapter number the site keeps under the bare clave folder. */
+    private const val LAST_UNFOLDED_CHAPTER = 999f
+
+    /** How many trailing digits of a folded chapter number are dropped from the folder. */
+    private const val FOLDED_DIGITS = 3
+
+    /**
+     * `{root}/books/{folder}/{fileName}`, with [fileName] percent-encoded as a single path segment and the
+     * folder folded from [number] the way the site folds it.
+     */
+    fun chapterPdfUrl(repositoryRoot: String, clave: String, fileName: String, number: Float?): String =
+        repositoryRoot.trimEnd('/') + "/books/" + encodePathSegment(foldedClave(clave, number)) + "/" +
+            encodePathSegment(fileName)
+
+    /**
+     * The site's folder for a work: the clave, plus — for a chapter numbered past 999 — the leading digits
+     * of the number with the last three removed. The fold is the site's, not a local convention: it keeps
+     * one directory from collecting thousands of files, so the folder is part of the measured address.
+     */
+    private fun foldedClave(clave: String, number: Float?): String {
+        if (number == null || number <= LAST_UNFOLDED_CHAPTER) return clave
+        return clave + number.toInt().toString().dropLast(FOLDED_DIGITS)
+    }
 
     /**
      * Percent-encodes [text] the way a URL path segment requires: every byte outside the RFC 3986

@@ -88,6 +88,7 @@ dependencies {
     // time. This is a test-only dependency: it never reaches the extension RuntimeClasspath the
     // APK is built from, so the host still owns NovelSource at load time.
     testImplementation(projects.novelApi)
+    testImplementation(projects.novelApiAndroid)
 
     // JUnit Jupiter, declared explicitly: this fork runs tests on the JUnit platform (see
     // `configureTest` in the build logic), and the bare `kotlin("test")` artifact autodetects

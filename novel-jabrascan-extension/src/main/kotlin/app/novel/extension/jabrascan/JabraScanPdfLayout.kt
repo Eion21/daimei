@@ -1,6 +1,7 @@
 package app.novel.extension.jabrascan
 
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * One line of text as the PDF extractor found it: the words of a single visual line already joined,
@@ -21,8 +22,9 @@ internal data class ExtractedLine(val text: String, val baseline: Float, val pag
  * - a line that is only a page number is not prose and is dropped;
  * - a line that opens or closes several pages is a running header or footer, not prose, and is dropped;
  * - two consecutive lines on the same page belong to the same paragraph unless the lower one sits more
- *   than [PARAGRAPH_GAP] times the page's typical leading (the median baseline-to-baseline gap) below
- *   the other — a paragraph break is the minority of gaps, so it does not move the median;
+ *   than [PARAGRAPH_GAP] times the page's typical leading below the other, where the leading is the mode
+ *   of the same-page gaps that sit at or below their median (fewer than [MIN_LEADING_GAPS] same-page gaps
+ *   make the leading unmeasurable, and then every line goes into one paragraph);
  * - a page change on its own is *not* a paragraph break: a paragraph that runs off the bottom of a page
  *   continues on the next one;
  * - inside a paragraph the hard line breaks become single spaces, and a word hyphenated across two
@@ -39,8 +41,21 @@ internal object JabraScanPdfLayout {
     private const val HYPHEN = '-'
     private const val SOFT_HYPHEN = '\u00AD'
 
-    /** A line starts a new paragraph below more than this many times the page's typical leading. */
-    private const val PARAGRAPH_GAP = 1.5f
+    /**
+     * A line starts a new paragraph below more than this many times the page's typical leading.
+     *
+     * Calibrated on 14 real chapters: the largest intra-paragraph gap measured 1.26x the leading (chapter
+     * AbsoluteSwordSense) and the tightest real paragraph break 1.38x (chapter MushokuTensei), so `1.32`
+     * sits between the two with roughly 0.7 pt of margin below and 0.9 pt above at a ~15 pt leading. The
+     * old `1.5f` never reached a real break, while a lower factor would invent breaks inside paragraphs.
+     */
+    private const val PARAGRAPH_GAP = 1.32f
+
+    /**
+     * Fewer same-page gaps than this and the page's leading is not measurable: [modeLeading] then returns
+     * `0f`, which [startsParagraph] reads as "never break".
+     */
+    private const val MIN_LEADING_GAPS = 4
 
     /** A line that opens or closes this many pages is a running header or footer. */
     private const val RUNNING_REPEATS = 2
@@ -55,7 +70,7 @@ internal object JabraScanPdfLayout {
         val body = withoutFurniture(lines)
         if (body.isEmpty()) return emptyList()
 
-        val leading = medianLeading(body)
+        val leading = modeLeading(body)
         val paragraphs = ArrayList<String>()
         val current = ArrayList<ExtractedLine>()
         for (line in body) {
@@ -95,16 +110,47 @@ internal object JabraScanPdfLayout {
     }
 
     /**
-     * The page's typical baseline-to-baseline distance: the median of the gaps between consecutive lines
-     * that share a page. It is `0f` when no two lines share a page, which disables the leading rule.
+     * The page's typical baseline-to-baseline distance: the mode of the same-page gaps that sit at or
+     * below their median.
+     *
+     * The median alone cannot carry this. In a chapter thick with dialogue, real paragraph breaks are a
+     * large fraction of all gaps, so the median itself drifts up to the break size, the threshold rises
+     * above every real break, and whole chapters collapse into a handful of blocks. Taking the mode of the
+     * gaps at or below the median pins the leading to the most common *ordinary* gap instead and ignores
+     * the breaks, which measured the leading correctly in 14 of 14 real chapters.
+     *
+     * Gaps are bucketed to 0.1 pt ([roundToInt]`(gap * 10)`) so near-identical leads land together. On a
+     * tie between buckets the smaller bucket wins: an under-estimated leading only adds breaks, while an
+     * over-estimated one collapses paragraphs.
+     *
+     * It is `0f` when fewer than [MIN_LEADING_GAPS] lines share a page — the leading is then not
+     * measurable and [startsParagraph] never breaks, so the whole input becomes ONE paragraph. For a
+     * chapter past the thresholds in [JabraScanParagraphWarnings], the consequence the reader sees is that
+     * the "long chapter in too few blocks" warning fires.
      */
-    private fun medianLeading(lines: List<ExtractedLine>): Float {
+    private fun modeLeading(lines: List<ExtractedLine>): Float {
         val gaps = ArrayList<Float>()
         for (i in 1 until lines.size) {
             if (lines[i].page == lines[i - 1].page) gaps.add(abs(lines[i].baseline - lines[i - 1].baseline))
         }
-        if (gaps.isEmpty()) return 0f
-        return gaps.sorted()[gaps.size / 2]
+        if (gaps.size < MIN_LEADING_GAPS) return 0f
+        val median = gaps.sorted()[gaps.size / 2]
+
+        val counts = HashMap<Int, Int>()
+        for (gap in gaps) {
+            if (gap <= median) counts.merge((gap * 10f).roundToInt(), 1, Int::plus)
+        }
+        // Iterate explicitly rather than `maxByOrNull`: a tie must resolve to the *smaller* bucket, and
+        // the map's iteration order does not guarantee that on its own.
+        var bestBucket = 0
+        var bestCount = 0
+        for ((bucket, count) in counts) {
+            if (count > bestCount || (count == bestCount && bucket < bestBucket)) {
+                bestBucket = bucket
+                bestCount = count
+            }
+        }
+        return bestBucket / 10f
     }
 
     /**

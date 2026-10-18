@@ -58,10 +58,20 @@ internal object JabraScanPdf {
      * The Android half of the safety warnings: turns each message [JabraScanParagraphWarnings] returns
      * into a `Log.w` that names the work and the chapter, so a broken extraction is provable from logcat
      * instead of only inferable from the code.
+     *
+     * [emit] is the seam that makes the emission reachable from a plain JVM test. Production omits it and
+     * gets the default — exactly the `Log.w(TAG, message)` line it always produced, unchanged — while a
+     * unit test passes a sink (e.g. one appending to a `MutableList<String>`) and reads the line back
+     * without a device and without ever touching `android.util.Log`. The default is only evaluated when
+     * [emit] is omitted, so a test that supplies a sink never calls `Log`.
      */
-    private fun warnOnSuspiciousLayout(chapter: ChapterIdentity, paragraphs: List<String>) {
+    internal fun warnOnSuspiciousLayout(
+        chapter: ChapterIdentity,
+        paragraphs: List<String>,
+        emit: (String) -> Unit = { Log.w(TAG, it) },
+    ) {
         for (warning in JabraScanParagraphWarnings.warnings(paragraphs)) {
-            Log.w(TAG, "work='${chapter.work}' chapter='${chapter.chapter}': $warning")
+            emit("work='${chapter.work}' chapter='${chapter.chapter}': $warning")
         }
     }
 

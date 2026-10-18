@@ -158,19 +158,20 @@ class JabraScanPdfLeadingTest {
 
     @Test
     fun `a tie between gap buckets keeps the smaller leading`() {
-        // With twenty gaps the 10th-percentile index is 1, so the pool is everything at or below the
-        // second-smallest gap: a single 10.0 pt and a single 12.0 pt tie at one member each. The smaller
-        // bucket, 10.0, must win, so the threshold is 12.9 pt: the seventeen 12.5 pt ordinary gaps stay
-        // inside it and only the final 14.0 pt gap breaks. Had the larger bucket won, the leading would be
-        // 12.0 and its 15.48 pt threshold would keep that 14.0 pt gap in the paragraph.
-        val baselines = ArrayList<Float>(listOf(0f, 10f, 22f))
-        repeat(17) { baselines.add(baselines.last() + 12.5f) }
+        // With forty gaps the 10th-percentile index is 3, so the pool is everything at or below the
+        // fourth-smallest gap: three 10.0 pt gaps and three 12.0 pt ones tie at three members each, so the
+        // pool still holds a bucket with more than one gap and the p10 is trusted. The smaller bucket,
+        // 10.0, must win, so the threshold is 12.9 pt: the thirty-three 12.5 pt ordinary gaps stay inside it
+        // and only the final 14.0 pt gap breaks. Had the larger bucket won, the leading would be 12.0 and
+        // its 15.48 pt threshold would keep that 14.0 pt gap in the paragraph.
+        val baselines = ArrayList<Float>(listOf(0f, 10f, 20f, 30f, 42f, 54f, 66f))
+        repeat(33) { baselines.add(baselines.last() + 12.5f) }
         baselines.add(baselines.last() + 14f)
         val lines = baselines.mapIndexed { i, baseline -> line("Line ${i + 1}", baseline) }
 
-        val expectedFirst = (1..20).joinToString(" ") { "Line $it" }
+        val expectedFirst = (1..40).joinToString(" ") { "Line $it" }
         assertEquals(
-            listOf(expectedFirst, "Line 21"),
+            listOf(expectedFirst, "Line 41"),
             JabraScanPdfLayout.reconstruct(lines).paragraphs,
         )
     }

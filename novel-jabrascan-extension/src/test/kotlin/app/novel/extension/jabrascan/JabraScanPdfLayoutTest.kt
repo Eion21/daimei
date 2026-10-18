@@ -1,6 +1,7 @@
 package app.novel.extension.jabrascan
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -99,6 +100,45 @@ class JabraScanPdfLayoutTest {
         val lines = listOf(line("Solo una línea", 100f))
 
         assertEquals(listOf("Solo una línea"), JabraScanPdfLayout.reconstruct(lines).paragraphs)
+    }
+
+    @Test
+    fun `a chapter whose gaps are one single group is not split and flags the statistic`() {
+        // Nineteen same-page gaps, all 12.0 pt: the p10 pool (everything at or below the p10) is the whole
+        // population, so there is one single group and no ordinary-versus-break separation. The guard must
+        // return a 0f leading — which is what keeps the chapter whole — and flag the statistic, so the
+        // fallback leading the rule would otherwise have found (12.0) must NOT come back.
+        val lines = (1..20).map { line("Line $it of the uniform block", (it - 1) * 12f) }
+
+        val reconstruction = JabraScanPdfLayout.reconstruct(lines)
+
+        assertEquals(0f, reconstruction.leading, "one group of gaps must not yield a usable leading")
+        assertEquals(1, reconstruction.paragraphs.size, "one group of gaps must not split anything")
+        assertTrue(
+            reconstruction.statisticUnreliable,
+            "one group of gaps must report the leading statistic as unreliable",
+        )
+    }
+
+    @Test
+    fun `one stray tiny gap does not drag the leading and flags the statistic`() {
+        // Twenty lines, so nineteen same-page gaps: one stray 1.0 pt followed by eighteen ordinary 10.0 pt
+        // gaps. With nineteen gaps the 10th-percentile index is 0, so the p10 lands on the stray and its
+        // whole pool is that single isolated value — no 0.1 pt bucket holds two gaps. The stray must not set
+        // the leading: the fallback keeps the ordinary 10.0 pt, so the eighteen ordinary gaps stay one
+        // paragraph (a 1.0 pt leading would instead have broken all of them), and the statistic is flagged.
+        val baselines = ArrayList<Float>(listOf(0f, 1f))
+        repeat(18) { baselines.add(baselines.last() + 10f) }
+        val lines = baselines.mapIndexed { i, baseline -> line("Line ${i + 1}", baseline) }
+
+        val reconstruction = JabraScanPdfLayout.reconstruct(lines)
+
+        assertEquals(10f, reconstruction.leading, "the stray 1.0 pt gap must not drag the leading down")
+        assertEquals(1, reconstruction.paragraphs.size, "with a 10.0 pt leading the ordinary gaps stay whole")
+        assertTrue(
+            reconstruction.statisticUnreliable,
+            "a p10 dragged onto an isolated gap must report the leading statistic as unreliable",
+        )
     }
 
     private fun line(text: String, baseline: Float, page: Int = 0) = ExtractedLine(text, baseline, page)

@@ -49,15 +49,25 @@ internal object JabraScanPdf {
         chapter: ChapterIdentity? = null,
     ): List<ContentBlock.Paragraph> =
         withContext(Dispatchers.IO) {
-            val paragraphs = extractPdf(bytes)
-            if (chapter != null) warnOnSuspiciousLayout(chapter, paragraphs)
-            paragraphs.map { ContentBlock.Paragraph(it) }
+            val reconstruction = extractPdf(bytes)
+            if (chapter != null) {
+                warnOnSuspiciousLayout(
+                    chapter = chapter,
+                    paragraphs = reconstruction.paragraphs,
+                    leading = reconstruction.leading,
+                    statisticUnreliable = reconstruction.statisticUnreliable,
+                )
+            }
+            reconstruction.paragraphs.map { ContentBlock.Paragraph(it) }
         }
 
     /**
      * The Android half of the safety warnings: turns each message [JabraScanParagraphWarnings] returns
      * into a `Log.w` that names the work and the chapter, so a broken extraction is provable from logcat
-     * instead of only inferable from the code.
+     * instead of only inferable from the code. When [statisticUnreliable] is set it emits one more line for
+     * the leading the pure layout did not trust — `0f` means the chapter read as one single group of gaps
+     * and was left unsplit, a positive value means the p10 landed on an isolated gap and the leading fell
+     * back to the mode of the gaps at or below their median (see [JabraScanPdfLayout]).
      *
      * [emit] is the seam that makes the emission reachable from a plain JVM test. Production omits it and
      * gets the default — exactly the `Log.w(TAG, message)` line it always produced, unchanged — while a
@@ -68,26 +78,48 @@ internal object JabraScanPdf {
     internal fun warnOnSuspiciousLayout(
         chapter: ChapterIdentity,
         paragraphs: List<String>,
+        leading: Float = 0f,
+        statisticUnreliable: Boolean = false,
         emit: (String) -> Unit = { Log.w(TAG, it) },
     ) {
         for (warning in JabraScanParagraphWarnings.warnings(paragraphs)) {
             emit("work='${chapter.work}' chapter='${chapter.chapter}': $warning")
         }
+        if (statisticUnreliable) {
+            val warning = unreliableLeadingWarning(leading)
+            emit("work='${chapter.work}' chapter='${chapter.chapter}': $warning")
+        }
     }
 
     /**
-     * The synchronous core of [extract]: in-memory PDF bytes in, paragraph texts out.
+     * What was done when [JabraScanPdfLayout] flagged its leading statistic: which of the two degenerate
+     * shapes it saw is read off the resulting [leading] — `0f` is the "one single group of gaps" case that
+     * forced no separation, a positive value is the fallback that kept the ordinary leading.
+     */
+    private fun unreliableLeadingWarning(leading: Float): String =
+        if (leading <= 0f) {
+            "the p10-anchored leading statistic was unreliable (every same-page gap read as one group): " +
+                "no separation was possible, so the chapter was not split"
+        } else {
+            "the p10-anchored leading statistic was unreliable (the p10 landed on an isolated gap): " +
+                "the leading fell back to the mode of the gaps at or below their median"
+        }
+
+    /**
+     * The synchronous core of [extract]: in-memory PDF bytes in, a [ParagraphReconstruction] out — the
+     * paragraphs *and* the leading they were split against, so the caller can warn on an untrusted
+     * statistic without reconstructing twice.
      *
      * It is split out so the PdfBox load and the pure reconstruction read as one straight line, and so
      * the dispatcher hop in [extract] stays a one-liner. The text-level reconstruction itself lives in
      * [JabraScanPdfLayout], where a plain JVM test drives it.
      */
-    internal fun extractPdf(bytes: ByteArray): List<String> {
-        if (bytes.isEmpty()) return emptyList()
+    internal fun extractPdf(bytes: ByteArray): ParagraphReconstruction {
+        if (bytes.isEmpty()) return ParagraphReconstruction(emptyList(), 0f, statisticUnreliable = false)
         val lines = PDDocument.load(bytes).use { document ->
             PdfLineStripper().apply { sortByPosition = true }.linesFrom(document)
         }
-        return JabraScanPdfLayout.reconstruct(lines).paragraphs
+        return JabraScanPdfLayout.reconstruct(lines)
     }
 }
 

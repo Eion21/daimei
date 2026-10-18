@@ -62,7 +62,7 @@ class JabraScanPdfLayoutTest {
     }
 
     @Test
-    fun `a paragraph break is the median-leading rule and nothing else`() {
+    fun `a paragraph break is the typical-leading rule and nothing else`() {
         val lines = listOf(
             line("Uno", 100f),
             line("dos", 112f),

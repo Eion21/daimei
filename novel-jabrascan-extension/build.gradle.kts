@@ -12,7 +12,7 @@ android {
         versionName = "1.0.0"
 
         // This module ships an instrumented test (the PdfBox end-to-end proof). The base
-        // convention does not set a runner, so it is declared here, as in :novel-pdf-spike.
+        // convention does not set a runner, so it is declared here.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 }
@@ -74,8 +74,8 @@ dependencies {
     compileOnly(libs.kotlinx.coroutines.core)
 
     // JabraScan's chapter bodies are PDFs, so the extension has to turn text out of them on the
-    // device. PdfBox-Android is a port of Apache PDFBox 2.0.x and is the extractor the spike measured:
-    // correct accents through CID/Identity-H fonts with a ToUnicode CMap. None of its types cross the
+    // device. PdfBox-Android is a port of Apache PDFBox 2.0.x, the extractor measured correct for
+    // accents through CID/Identity-H fonts with a ToUnicode CMap. None of its types cross the
     // NovelSource signature — the host hands back a plain ByteArray — so bundling it shadows nothing
     // the host provides, and being a Java library it drags in no Kotlin runtime.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
@@ -102,8 +102,8 @@ dependencies {
     // The instrumented test proves the PDF path on a device: PdfBox is Android-only and its glyph
     // tables live in assets, so this cannot be a JVM test. The androidx test runner and the contract
     // types go on the test apk, and the PDF asset is this module's own copy under androidTest/assets.
-    // The same fixture ships in app and in novel-pdf-spike, and a test asserts all three copies stay
-    // byte-identical. These are test-only and never reach the extension apk.
+    // The same fixture also ships in app, and a test asserts both copies stay byte-identical. These are
+    // test-only and never reach the extension apk.
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(projects.novelApi)

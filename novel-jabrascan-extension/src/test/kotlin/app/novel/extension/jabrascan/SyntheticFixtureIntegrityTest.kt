@@ -8,11 +8,11 @@ import java.security.MessageDigest
 
 /**
  * Pins the shared synthetic fixture at the byte level: its object-stream structure, and the fact that its
- * three committed copies are byte-identical.
+ * two committed copies are byte-identical.
  *
  * These are pure JVM checks — the file is only read, never parsed with PdfBox — so no device is involved.
  * The paths are relative to this module's directory (Gradle runs unit tests with the module as the working
- * directory): this module's own copy sits under `src/androidTest/assets`, and the other two are reached
+ * directory): this module's own copy sits under `src/androidTest/assets`, and the other one is reached
  * with `../`.
  */
 class SyntheticFixtureIntegrityTest {
@@ -35,19 +35,19 @@ class SyntheticFixtureIntegrityTest {
         // --object-streams=generate puts the font dictionaries inside the compressed object stream, so the
         // literal `Identity-H` appears zero times in the file. Identifying the Identity-H/CID and
         // subset-font properties requires decompressing that stream, so they are asserted through PdfBox,
-        // which does exactly that — see SyntheticSpanishNovelFixtureTest in :novel-pdf-spike. Do NOT add a
+        // which does exactly that — see JabraScanPdfInstrumentedTest in this module. Do NOT add a
         // raw-byte assertion for Identity-H; it would fail on a correct fixture and would be "fixing" a
         // non-bug.
     }
 
     @Test
-    fun `the three fixture copies are byte-identical`() {
+    fun `the two fixture copies are byte-identical`() {
         val hashes = FIXTURE_PATHS.associateWith { sha256(File(it)) }
         val listing = hashes.entries.joinToString("\n") { "  ${it.value}  ${it.key}" }
         assertEquals(
             1,
             hashes.values.toSet().size,
-            "the three synthetic fixture copies diverged; regenerate them as one file:\n$listing",
+            "the two synthetic fixture copies diverged; regenerate them as one file:\n$listing",
         )
     }
 
@@ -61,7 +61,6 @@ class SyntheticFixtureIntegrityTest {
 
         val FIXTURE_PATHS = listOf(
             "src/androidTest/assets/synthetic_spanish_novel.pdf",
-            "../novel-pdf-spike/src/androidTest/assets/synthetic_spanish_novel.pdf",
             "../app/src/androidTest/assets/synthetic_spanish_novel.pdf",
         )
     }

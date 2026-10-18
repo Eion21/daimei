@@ -34,7 +34,7 @@ internal data class ParagraphReconstruction(
  * The text-level half of PDF extraction: the lines an extractor found in, the paragraphs a reader sees
  * out.
  *
- * The rules are the ones the spike measured against real jabrascan.net PDFs, in the order they apply:
+ * The rules are the ones measured against real jabrascan.net PDFs, in the order they apply:
  *
  * - a line that is only a page number is not prose and is dropped;
  * - a line that opens or closes several pages is a running header or footer, not prose, and is dropped;

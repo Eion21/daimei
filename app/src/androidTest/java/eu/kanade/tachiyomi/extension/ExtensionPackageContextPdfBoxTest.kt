@@ -32,7 +32,7 @@ import java.io.File
  *
  * The fixture is self-authored and lives in `app/src/androidTest/assets`. It replaces the third-party
  * `t_Arifureta.pdf` sample, which is no longer tracked by git and must not be depended on; the
- * `synthetic_spanish_novel.pdf` copies in `app`, `novel-pdf-spike` and `novel-jabrascan-extension` are byte-identical
+ * `synthetic_spanish_novel.pdf` copies in `app` and `novel-jabrascan-extension` are byte-identical
  * (a JVM test in `novel-jabrascan-extension` pins that).
  */
 @RunWith(AndroidJUnit4::class)

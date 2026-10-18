@@ -7,10 +7,11 @@ import org.junit.jupiter.api.Test
 /**
  * The leading statistic and the paragraph threshold, pinned against exact numbers.
  *
- * [JabraScanPdfLayoutTest] drives the rule end to end on the shapes the spike measured; this class
- * isolates the two decisions this change made: how the page's typical leading is derived, and at how many
- * leads of gap a line starts a paragraph. Every case is stated as geometry — numeric baselines on one
- * page — and asserted through the paragraphs a reader would see, never through internals.
+ * [JabraScanPdfLayoutTest] drives the rule end to end on the shapes measured on real jabrascan.net
+ * PDFs; this class isolates the two decisions this change made: how the page's typical leading is
+ * derived, and at how many leads of gap a line starts a paragraph. Every case is stated as geometry —
+ * numeric baselines on one page — and asserted through the paragraphs a reader would see, never through
+ * internals.
  *
  * The prose is invented here; no third-party novel text is used. A paragraph break is a gap strictly
  * greater than 1.29x the leading, so with a 10.0 pt leading the threshold sits at 12.9 pt and the two

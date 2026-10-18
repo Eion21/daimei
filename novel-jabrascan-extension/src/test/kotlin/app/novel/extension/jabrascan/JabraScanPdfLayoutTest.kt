@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 /**
  * The paragraph rule as a pure function: a list of extracted lines in, the reader's paragraphs out.
  *
- * The lines here stand in for the shapes the spike measured on real jabrascan.net PDFs — word-by-word
+ * The lines here stand in for the shapes measured on real jabrascan.net PDFs — word-by-word
  * baselines, running headers and footers, page numbers, a word split across lines, a paragraph running
  * off a page — without a device, a PDF or a dispatcher.
  */

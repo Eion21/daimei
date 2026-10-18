@@ -16,8 +16,8 @@ private const val TAG = "JabraScanPdf"
  * Turns a JabraScan chapter PDF into the paragraphs the reader renders.
  *
  * JabraScan serves every chapter body as a PDF, so this is the only way prose reaches the reader. The
- * extraction is PdfBox-Android's: the spike proved it is correct for accents (100% identical to
- * `pdftotext` on the sample PDFs) and costs 16-24 ms per page. Only the layout half is ours
+ * extraction is PdfBox-Android's: it was measured correct for accents (100% identical to `pdftotext` on
+ * the sample PDFs) and costs 16-24 ms per page. Only the layout half is ours
  * ([JabraScanPdfLayout]).
  *
  * Two things shape the split:

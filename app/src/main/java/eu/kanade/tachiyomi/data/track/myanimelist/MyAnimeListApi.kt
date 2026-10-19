@@ -85,7 +85,6 @@ class MyAnimeListApi(
                     .awaitSuccess()
                     .parseAs<MALSearchResult>()
                     .data
-                    .filter { !(it.node.mediaType.contains("novel")) }
                     .map { parseSearchItem(it.node) }
             }
         }

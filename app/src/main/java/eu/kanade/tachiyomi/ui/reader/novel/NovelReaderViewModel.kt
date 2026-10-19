@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.novel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.novel.reader.core.ReadingPosition
@@ -9,12 +10,17 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.download.DownloadProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.UpdateChapter
@@ -63,6 +69,11 @@ class NovelReaderViewModel(
     private val saveReadingProgress: SaveReadingProgress,
     private val updateChapter: UpdateChapter,
     private val upsertHistory: UpsertHistory,
+    private val trackChapter: TrackChapter,
+    private val trackPreferences: TrackPreferences,
+    private val getIncognitoState: GetIncognitoState,
+    private val context: Context,
+    @AppCoroutineScope private val appScope: CoroutineScope,
 ) : ViewModel() {
 
     private val _content = MutableStateFlow<ChapterContent?>(null)
@@ -262,12 +273,42 @@ class NovelReaderViewModel(
      * [UpsertHistory]. Flipping the flag alone leaves a finished chapter invisible on that screen, which is why
      * this still calls [recordHistory] — though by the time a chapter reaches its end that row normally already
      * exists, written when the chapter was opened.
+     *
+     * Finishing it also tells the trackers, the same way the manga reader does, so a novel read moves the progress
+     * on AniList or MyAnimeList instead of leaving it behind.
      */
     fun markRead(chapterId: Long) {
         viewModelScope.launch {
             updateChapter.await(ChapterUpdate(chapterId) { read = true })
             recordHistory(chapterId)
+
+            // Outlives the reader on purpose, and off the main thread: reading the last page and leaving
+            // right away is the common case. Same as the manga reader.
+            appScope.launch { updateTrackChapterRead(chapterId) }
         }
+    }
+
+    /**
+     * Reports the finished chapter to the trackers, if any of them should hear about it.
+     *
+     * The guards are the manga reader's, in its order: the auto-update preference can turn this off; a chapter whose
+     * number the source did not recognize has no number to report; and an incognito source was never meant to be
+     * reported. Telling a tracker twice is not decided here — [TrackChapter] skips a chapter number the tracker
+     * already has, so a chapter finished again goes through the same call and is skipped there. A tracker failure is
+     * logged and swallowed: it must never keep the chapter from being marked read.
+     */
+    private suspend fun updateTrackChapterRead(chapterId: Long) {
+        if (!trackPreferences.autoUpdateTrack.get()) return
+
+        val chapter = getChapter.await(chapterId) ?: return
+        // -1 is what a source that publishes no chapter numbers reports, and there is nothing to send.
+        if (chapter.chapterNumber < 0) return
+
+        val manga = getManga.await(chapter.mangaId) ?: return
+        if (getIncognitoState.await(manga.source)) return
+
+        runCatching { trackChapter.await(context, manga.id, chapter.chapterNumber) }
+            .onFailure { logcat(LogPriority.WARN, it) { "Failed to report chapter $chapterId to the trackers" } }
     }
 
     /**

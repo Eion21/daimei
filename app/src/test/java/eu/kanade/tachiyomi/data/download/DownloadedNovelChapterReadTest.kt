@@ -10,11 +10,15 @@ import app.novel.source.api.NovelSource
 import app.novel.source.api.SourceInfo
 import app.novel.source.http.HttpNovelSource
 import com.hippo.unifile.UniFile
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import eu.kanade.tachiyomi.ui.reader.novel.NovelReaderViewModel
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -225,6 +229,11 @@ class DownloadedNovelChapterReadTest {
             getChapter = GetChapter(chapters),
             getManga = GetManga(mangaRepository()),
             sourceManager = sourceManager(source),
+            trackChapter = mockk(relaxed = true),
+            trackPreferences = TrackPreferences(InMemoryPreferenceStore()),
+            getIncognitoState = mockk(relaxed = true),
+            context = mockk(relaxed = true),
+            appScope = CoroutineScope(Dispatchers.Unconfined),
         )
     }
 

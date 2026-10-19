@@ -4,8 +4,12 @@ import app.novel.reader.core.ReadingPosition
 import app.novel.runtime.SourceRegistry
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.ContentBlock
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -147,7 +151,7 @@ class NovelReaderViewModelTest {
         override fun getPercentByMangaId(mangaId: Long): Flow<Map<Long, Float>> = emptyFlow()
     }
 
-    private class FakeChapterRepository : ChapterRepository {
+    private class FakeChapterRepository(private val chapter: Chapter? = null) : ChapterRepository {
         val updates = mutableListOf<ChapterUpdate>()
 
         override suspend fun update(chapterUpdate: ChapterUpdate) {
@@ -164,7 +168,7 @@ class NovelReaderViewModelTest {
             updated: List<ChapterRemoteUpdate>,
         ): List<Chapter> = emptyList()
 
-        override suspend fun getChapterById(id: Long): Chapter? = null
+        override suspend fun getChapterById(id: Long): Chapter? = chapter?.takeIf { it.id == id }
         override suspend fun getChapterByMangaId(mangaId: Long, applyScanlatorFilter: Boolean) = emptyList<Chapter>()
         override suspend fun getChapterSummaryByMangaId(mangaId: Long): ChapterSummary = throw NotImplementedError()
         override suspend fun getScanlatorsByMangaId(mangaId: Long) = emptyList<String>()
@@ -177,8 +181,8 @@ class NovelReaderViewModelTest {
         ): Flow<List<Chapter>> = emptyFlow()
     }
 
-    private class UnusedMangaRepository : MangaRepository {
-        override suspend fun getMangaById(id: Long): Manga = throw NotImplementedError()
+    private class FakeMangaRepository(private val manga: Manga? = null) : MangaRepository {
+        override suspend fun getMangaById(id: Long): Manga = manga ?: throw NotImplementedError()
         override fun getMangaByIdAsFlow(id: Long): Flow<Manga> = emptyFlow()
         override suspend fun getMangaByUrlAndSourceId(url: String, sourceId: Long): Manga? = null
         override fun getMangaByUrlAndSourceIdAsFlow(url: String, sourceId: Long): Flow<Manga?> = emptyFlow()
@@ -228,9 +232,14 @@ class NovelReaderViewModelTest {
         progress: ReadingProgressRepository = FakeProgressRepository(saved),
         chapters: ChapterRepository = FakeChapterRepository(),
         history: HistoryRepository = FakeHistoryRepository(),
+        manga: Manga? = null,
+        trackChapter: TrackChapter = mockk(relaxed = true),
+        trackPreferences: TrackPreferences = TrackPreferences(InMemoryPreferenceStore()),
+        incognito: GetIncognitoState = mockk<GetIncognitoState> { coEvery { await(anyNullable()) } returns false },
+        appScope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
     ): NovelReaderViewModel {
         return NovelReaderViewModel(
-            getChapterContent = GetChapterContent(content, chapters, UnusedMangaRepository(), SourceRegistry()),
+            getChapterContent = GetChapterContent(content, chapters, FakeMangaRepository(), SourceRegistry()),
             // The read order asks for the downloaded file before the cache. These chapters were read and never
             // downloaded, so the file step has to answer nothing — and it is pointed at a storage manager with no
             // downloads directory rather than at a mock that would answer anything, so the cache and the source keep
@@ -242,12 +251,17 @@ class NovelReaderViewModelTest {
                 LibraryPreferences(InMemoryPreferenceStore()),
             ),
             getChapter = GetChapter(chapters),
-            getManga = GetManga(UnusedMangaRepository()),
+            getManga = GetManga(FakeMangaRepository(manga)),
             sourceManager = mockk(relaxed = true),
             getReadingProgress = GetReadingProgress(progress),
             saveReadingProgress = SaveReadingProgress(progress),
             updateChapter = UpdateChapter(chapters),
             upsertHistory = UpsertHistory(history),
+            trackChapter = trackChapter,
+            trackPreferences = trackPreferences,
+            getIncognitoState = incognito,
+            context = mockk(relaxed = true),
+            appScope = appScope,
         )
     }
 
@@ -493,6 +507,166 @@ class NovelReaderViewModelTest {
         }
     }
 
+    // Finishing a chapter, which the trackers have to hear about.
+
+    @Test
+    fun `finishing a chapter reports it to the tracker with its number`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val trackChapter = mockk<TrackChapter>(relaxed = true)
+            val viewModel = viewModel(
+                chapters = FakeChapterRepository(chapter(CHAPTER_ID)),
+                manga = manga(),
+                trackChapter = trackChapter,
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { trackChapter.await(any(), MANGA_ID, 5.0) }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `an incognito source is never reported`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val chapters = FakeChapterRepository(chapter(CHAPTER_ID))
+            val trackChapter = mockk<TrackChapter>(relaxed = true)
+            val viewModel = viewModel(
+                chapters = chapters,
+                manga = manga(),
+                trackChapter = trackChapter,
+                incognito = mockk<GetIncognitoState> { coEvery { await(anyNullable()) } returns true },
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { trackChapter.await(any(), any(), any()) }
+            // The chapter is still a chapter the reader reached: incognito hides the read, it does not undo it.
+            assertEquals(true, chapters.updates.single().read)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `a chapter whose number was not recognized is never reported`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val chapters = FakeChapterRepository(chapter(CHAPTER_ID, chapterNumber = -1.0))
+            val trackChapter = mockk<TrackChapter>(relaxed = true)
+            val viewModel = viewModel(
+                chapters = chapters,
+                manga = manga(),
+                trackChapter = trackChapter,
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            // A source that publishes no chapter numbers reports -1, and there is no number to send to a tracker.
+            coVerify(exactly = 0) { trackChapter.await(any(), any(), any()) }
+            assertEquals(true, chapters.updates.single().read)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `auto tracking off is never reported`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val chapters = FakeChapterRepository(chapter(CHAPTER_ID))
+            val trackChapter = mockk<TrackChapter>(relaxed = true)
+            val trackPreferences = TrackPreferences(InMemoryPreferenceStore()).apply {
+                autoUpdateTrack.set(false)
+            }
+            val viewModel = viewModel(
+                chapters = chapters,
+                manga = manga(),
+                trackChapter = trackChapter,
+                trackPreferences = trackPreferences,
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { trackChapter.await(any(), any(), any()) }
+            assertEquals(true, chapters.updates.single().read)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `an already read chapter is reported again`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val trackChapter = mockk<TrackChapter>(relaxed = true)
+            val viewModel = viewModel(
+                chapters = FakeChapterRepository(chapter(CHAPTER_ID, read = true)),
+                manga = manga(),
+                trackChapter = trackChapter,
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            // The reader reports the number it was handed; `TrackChapter` is what skips a number the tracker
+            // already has, so the already-read flag changes nothing here.
+            coVerify(exactly = 1) { trackChapter.await(any(), MANGA_ID, 5.0) }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `a tracker failure does not keep the chapter from being marked read`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val chapters = FakeChapterRepository(chapter(CHAPTER_ID))
+            val history = FakeHistoryRepository()
+            val trackChapter = mockk<TrackChapter>()
+            coEvery { trackChapter.await(any(), any(), any()) } throws RuntimeException("tracker is down")
+            val viewModel = viewModel(
+                chapters = chapters,
+                history = history,
+                manga = manga(),
+                trackChapter = trackChapter,
+                appScope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+            viewModel.markRead(CHAPTER_ID)
+            advanceUntilIdle()
+
+            // A tracker being down is not the reader's problem: the read flag and the History row are already written.
+            assertEquals(true, chapters.updates.single().read)
+            assertEquals(CHAPTER_ID, history.updates.single().chapterId)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    /** A chapter the tracker can be told about, by default unread and with a number the source recognized. */
+    private fun chapter(id: Long, read: Boolean = false, chapterNumber: Double = 5.0) = Chapter.create().copy(
+        id = id,
+        mangaId = MANGA_ID,
+        chapterNumber = chapterNumber,
+        read = read,
+    )
+
+    /** The manga a chapter belongs to, with a source the incognito check can be pointed at. */
+    private fun manga() = Manga.create().copy(id = MANGA_ID, source = SOURCE_ID)
+
     @Test
     fun `a cached chapter opens with nothing to fall back on`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
@@ -685,6 +859,8 @@ class NovelReaderViewModelTest {
 
     private companion object {
         const val CHAPTER_ID = 7L
+        const val MANGA_ID = 42L
+        const val SOURCE_ID = 99L
 
         /** Stands in for a content store that cannot be read, which is the one failure that carries a message. */
         const val STORE_FAILURE = "the chapter content store is unavailable"

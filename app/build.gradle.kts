@@ -393,6 +393,8 @@ dependencies {
     // PackageManager and PdfBox are all Android-only and cannot be exercised on a plain JVM.
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.sqldelight.androidxDriver)
+    androidTestImplementation(libs.androidx.sqlite.bundled)
     // runBlocking drives the loader's suspend entry point from the test.
     androidTestImplementation(libs.kotlinx.coroutines.core)
     // The positive test extracts text out of a bundled PDF, so PdfBox and its glyph-table assets ship in the

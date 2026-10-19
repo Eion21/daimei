@@ -129,8 +129,8 @@ class NovelReaderInteractionTest {
                         }
                     }
                 }
-                awaitUi("isolated reader content and controls") {
-                    hasText("Reader controls") && hasText("Alpha beta gamma. Paragraph 0 is isolated test content.")
+                awaitUi("isolated reader content") {
+                    hasText("Alpha beta gamma. Paragraph 0 is isolated test content.")
                 }
                 try {
                     test()
@@ -155,6 +155,8 @@ class NovelReaderInteractionTest {
 
     @Test
     fun upperTapTogglesButLowerTapAndScrollingDoNotAndControlsDispatchActions() = withReader {
+        assertFalse(hasText("Reader controls"))
+        assertFalse(hasText("Reader settings"))
         val bounds = Rect().also { automation.rootInActiveWindow.getBoundsInScreen(it) }
         tap(bounds.centerX().toFloat(), bounds.height() * 0.75f)
         assertFalse(hasText("Reader settings"))
@@ -165,6 +167,7 @@ class NovelReaderInteractionTest {
         instrumentation.runOnMainSync { assertTrue(backPressed) }
         tap(bounds.centerX().toFloat(), bounds.height() * 0.25f)
         assertFalse(hasText("Reader settings"))
+        assertFalse(hasText("Reader controls"))
 
         val scrollable = checkNotNull(find(automation.rootInActiveWindow) { it.isScrollable })
         assertTrue(scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))
@@ -235,6 +238,52 @@ class NovelReaderInteractionTest {
         if (!hasText("Share selection")) click("More options")
         click("Share selection")
         assertEquals("Alpha", shared.get())
+    }
+
+    @Test
+    fun longPressDragAcrossParagraphsCopiesAndSharesOnlyTheSelectedText() = withReader(diagnostics = true) {
+        val copyLabel = instrumentation.targetContext.getString(android.R.string.copy)
+        for (paragraphCount in 2..3) {
+            val texts = content.blocks.take(paragraphCount).map { (it as ContentBlock.Paragraph).text }
+            val expected = texts.joinToString("\n")
+            fun selectParagraphs() {
+                val first = checkNotNull(findVisibleAction(texts.first()))
+                val last = checkNotNull(findVisibleAction(texts.last()))
+                val start = Rect().also(first::getBoundsInScreen)
+                val end = Rect().also(last::getBoundsInScreen)
+                val x = start.left + 20f
+                val y = start.top + 15f
+                val endX = end.right - 10f
+                val endY = end.bottom - 10f
+                val downTime = SystemClock.uptimeMillis()
+                diagnostic("cross-paragraph gesture count=$paragraphCount from=($x,$y) to=($endX,$endY) expected=$expected")
+                try {
+                    touch(MotionEvent.ACTION_DOWN, x, y, downTime)
+                    SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 100)
+                    for (step in 1..20) {
+                        touch(MotionEvent.ACTION_MOVE, x + (endX - x) * step / 20,
+                            y + (endY - y) * step / 20, downTime)
+                        SystemClock.sleep(20)
+                    }
+                } finally {
+                    touch(MotionEvent.ACTION_UP, endX, endY, downTime)
+                }
+                awaitUi("Copy after dragging across $paragraphCount paragraphs") { hasText(copyLabel) }
+            }
+            selectParagraphs()
+            click(copyLabel)
+            instrumentation.runOnMainSync {
+                val clipboard = instrumentation.targetContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val actual = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                diagnostic("cross-paragraph copy count=$paragraphCount expected=$expected actual=$actual")
+                assertEquals("Exact copied text across $paragraphCount paragraphs", expected, actual)
+            }
+            selectParagraphs()
+            shared.set(null)
+            if (!hasText("Share selection")) click("More options")
+            click("Share selection")
+            assertEquals("Exact shared text across $paragraphCount paragraphs", expected, shared.get())
+        }
     }
 
     private fun tap(x: Float, y: Float) {

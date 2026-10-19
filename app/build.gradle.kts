@@ -1,5 +1,6 @@
 import com.android.build.api.variant.ApplicationVariant
 import com.android.build.api.variant.BuildConfigField
+import com.android.build.api.variant.HostTestBuilder
 import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension
 import mihon.gradle.Config
 import mihon.gradle.getCurrentTime
@@ -489,6 +490,12 @@ fun ApplicationVariant.buildConfigField(type: String, name: String, value: Provi
 }
 
 androidComponents {
+    // Keep release JVM tests enabled despite AGP's tested-build-type default.
+    // https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/variant/HasHostTestsBuilder
+    beforeVariants(selector().withBuildType("release")) {
+        it.hostTests.getValue(HostTestBuilder.UNIT_TEST_TYPE).enable = true
+    }
+
     onVariants { variant ->
         val isUnstableBuild = variant.buildType == "debug" || variant.buildType == "nightly"
         val buildTime = if (isUnstableBuild) currentTime else latestCommitTime

@@ -1,29 +1,44 @@
 package eu.kanade.tachiyomi.ui.reader.novel
 
+import android.content.Intent
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.novel.reader.compose.NovelReaderScreen
+import app.novel.reader.core.FontFamily
 import app.novel.reader.core.ReaderSettings
+import app.novel.reader.core.ReaderTheme
 import app.novel.reader.core.ReadingPosition
 import dev.zacsweers.metrox.viewmodel.metroViewModel
+import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.PreferenceScreen
 import mihon.app.di.appGraph
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 
 /**
  * Binds [NovelReaderViewModel] to the novel reader surface.
  *
- * This is the whole reader: loading, the saved position, typography and progress persistence. Navigation is
- * deliberately not involved — the host decides which chapter to open and never pushes a new one.
+ * Owns loading, the saved position, live reader preferences and progress persistence. The toolbar can return
+ * to the caller, but never opens another chapter.
  */
 @Composable
 fun NovelReaderHost(
@@ -31,6 +46,9 @@ fun NovelReaderHost(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    var settingsVisible by rememberSaveable { mutableStateOf(false) }
+    val systemDark = isSystemInDarkTheme()
     val preferences = remember { context.appGraph.novelReaderPreferences }
     val viewModel = metroViewModel<NovelReaderViewModel>()
 
@@ -57,6 +75,7 @@ fun NovelReaderHost(
         maxTextWidthDp,
         theme,
         followSystemTheme,
+        systemDark,
     ) {
         ReaderSettings(
             fontFamily = fontFamily,
@@ -64,7 +83,11 @@ fun NovelReaderHost(
             lineHeightMultiplier = lineHeightPercent / PERCENT,
             horizontalMarginDp = horizontalMarginDp,
             maxTextWidthDp = maxTextWidthDp,
-            theme = theme,
+            theme = if (followSystemTheme) {
+                if (systemDark) ReaderTheme.DARK else ReaderTheme.LIGHT
+            } else {
+                theme
+            },
             followSystemTheme = followSystemTheme,
         ).normalized()
     }
@@ -113,6 +136,86 @@ fun NovelReaderHost(
         onRetry = { viewModel.load(chapterId) },
         onProgress = onProgress,
         modifier = modifier,
+        backLabel = stringResource(MR.strings.action_bar_up_description),
+        settingsLabel = stringResource(MR.strings.action_settings),
+        controlsLabel = stringResource(MR.strings.novel_reader_controls),
+        shareLabel = stringResource(MR.strings.action_share),
+        onBack = { backDispatcher?.onBackPressed() },
+        onSettings = { settingsVisible = true },
+        onShareSelectedText = { selectedText ->
+            if (selectedText.isNotBlank()) {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, selectedText)
+                }
+                context.startActivity(Intent.createChooser(send, context.stringResource(MR.strings.action_share)))
+            }
+        },
+    )
+
+    if (settingsVisible) {
+        ModalBottomSheet(onDismissRequest = { settingsVisible = false }) {
+            TextButton(onClick = { settingsVisible = false }, modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text(stringResource(MR.strings.action_close))
+            }
+            NovelReaderSettings(preferences, followSystemTheme)
+        }
+    }
+}
+
+/** Uses the existing preference widgets and keys, including their persistence and accessibility behavior. */
+@Composable
+private fun NovelReaderSettings(preferences: NovelReaderPreferences, followSystemTheme: Boolean) {
+    PreferenceScreen(
+        modifier = Modifier.fillMaxHeight(0.85f),
+        items = listOf(
+            Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.novel_reader_interactions)),
+            Preference.PreferenceItem.ListPreference(
+                preference = preferences.fontFamily,
+                title = stringResource(MR.strings.novel_reader_font),
+                entries = mapOf(
+                    FontFamily.SERIF to stringResource(MR.strings.novel_reader_serif),
+                    FontFamily.SANS_SERIF to stringResource(MR.strings.novel_reader_sans_serif),
+                    FontFamily.MONOSPACE to stringResource(MR.strings.novel_reader_monospace),
+                ),
+            ),
+            Preference.PreferenceItem.SliderPreference(
+                preference = preferences.fontSizeSp,
+                title = stringResource(MR.strings.novel_reader_font_size),
+                valueRange = ReaderSettings.MIN_FONT_SIZE_SP.toInt()..ReaderSettings.MAX_FONT_SIZE_SP.toInt(),
+            ),
+            Preference.PreferenceItem.SliderPreference(
+                preference = preferences.lineHeightPercent,
+                title = stringResource(MR.strings.novel_reader_line_height),
+                valueRange = (ReaderSettings.MIN_LINE_HEIGHT * PERCENT).toInt()..
+                    (ReaderSettings.MAX_LINE_HEIGHT * PERCENT).toInt() step 10,
+                valueText = { "$it%" },
+            ),
+            Preference.PreferenceItem.SliderPreference(
+                preference = preferences.horizontalMarginDp,
+                title = stringResource(MR.strings.novel_reader_margin),
+                valueRange = ReaderSettings.MIN_MARGIN_DP..ReaderSettings.MAX_MARGIN_DP,
+            ),
+            Preference.PreferenceItem.SliderPreference(
+                preference = preferences.maxTextWidthDp,
+                title = stringResource(MR.strings.novel_reader_width),
+                valueRange = ReaderSettings.MIN_TEXT_WIDTH_DP..ReaderSettings.MAX_TEXT_WIDTH_DP step 20,
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = preferences.followSystemTheme,
+                title = stringResource(MR.strings.theme_system),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                preference = preferences.theme,
+                title = stringResource(MR.strings.pref_category_theme),
+                visible = !followSystemTheme,
+                entries = mapOf(
+                    ReaderTheme.LIGHT to stringResource(MR.strings.theme_light),
+                    ReaderTheme.DARK to stringResource(MR.strings.theme_dark),
+                    ReaderTheme.SEPIA to stringResource(MR.strings.novel_reader_sepia),
+                ),
+            ),
+        ),
     )
 }
 

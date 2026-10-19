@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.contextmenu.builder.item
+import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMenuComponents
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.rememberSelectionState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -56,6 +60,8 @@ fun ChapterBody(
     listState: LazyListState,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    shareLabel: String = "",
+    onShareSelectedText: (String) -> Unit = {},
 ) {
     // Clamping lives in reader-core, so the UI cannot render an unreadable chapter from a corrupt setting.
     val effectiveSettings = settings.normalized()
@@ -97,6 +103,8 @@ fun ChapterBody(
                         paragraphStyle = paragraphStyle,
                         textColor = colors.text,
                         dividerColor = dividerColor,
+                        shareLabel = shareLabel,
+                        onShareSelectedText = onShareSelectedText,
                     )
                 }
             }
@@ -111,13 +119,17 @@ private fun ChapterBlock(
     paragraphStyle: TextStyle,
     textColor: Color,
     dividerColor: Color,
+    shareLabel: String,
+    onShareSelectedText: (String) -> Unit,
 ) {
     when (block) {
-        is ContentBlock.Paragraph -> Text(text = block.text, style = paragraphStyle)
+        is ContentBlock.Paragraph -> SelectableChapterText(block.text, paragraphStyle, shareLabel, onShareSelectedText)
 
-        is ContentBlock.Heading -> Text(
+        is ContentBlock.Heading -> SelectableChapterText(
             text = block.text,
             style = settings.headingStyle(level = block.level, textColor = textColor),
+            shareLabel = shareLabel,
+            onShareSelectedText = onShareSelectedText,
         )
 
         is ContentBlock.Image -> AsyncImage(
@@ -129,6 +141,32 @@ private fun ChapterBlock(
         ContentBlock.Divider -> HorizontalDivider(color = dividerColor)
     }
 }
+
+/** Selection stays within a text block, so lazy, uncomposed blocks are never silently included in Select all. */
+@Composable
+private fun SelectableChapterText(
+    text: String,
+    style: TextStyle,
+    shareLabel: String,
+    onShareSelectedText: (String) -> Unit,
+) {
+    val selection = rememberSelectionState()
+    SelectionContainer(
+        state = selection,
+        modifier = Modifier.appendTextContextMenuComponents {
+            if (selection.selectedTexts.any { it.isNotEmpty() } && shareLabel.isNotEmpty()) {
+                item(key = ShareSelection, label = shareLabel) {
+                    onShareSelectedText(selection.selectedTexts.joinToString("\n") { it.text })
+                    close()
+                }
+            }
+        },
+    ) {
+        Text(text = text, style = style)
+    }
+}
+
+private data object ShareSelection
 
 /**
  * Headings follow the Material3 type scale but keep the reader's font family and text colour, because heading

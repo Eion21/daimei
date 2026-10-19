@@ -1,9 +1,12 @@
 package app.novel.reader.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,17 +19,22 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.novel.reader.core.BlockLayout
@@ -120,6 +128,10 @@ internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean):
  * The error copy is passed in rather than read here because this module resolves no resources of its own: the caller
  * hands over the message, the reason when there is one and the label for the action.
  *
+ * Upper-half taps toggle an overlay toolbar without resizing the document; scrolling and native text selection
+ * keep their own gestures. Labels and actions come from the resource-owning host, including a focusable controls
+ * button for users who cannot use tap zones. Sharing is delegated with only the native selected substring.
+ *
  * @param initialPosition where to start reading, already expressed as a logical position.
  * @param errorMessage what to tell the reader when the chapter could not be opened. Non-null is what makes a null
  *   content the error state rather than the loading one; a chapter with no blocks is the error state either way.
@@ -142,7 +154,15 @@ fun NovelReaderScreen(
     onRetry: () -> Unit,
     onProgress: (ReadingPosition) -> Unit,
     modifier: Modifier = Modifier,
+    backLabel: String = "",
+    settingsLabel: String = "",
+    shareLabel: String = "",
+    controlsLabel: String = "",
+    onBack: () -> Unit = {},
+    onSettings: () -> Unit = {},
+    onShareSelectedText: (String) -> Unit = {},
 ) {
+    var controlsVisible by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val latestOnProgress by rememberUpdatedState(onProgress)
     val effectiveSettings = settings.normalized()
@@ -175,7 +195,7 @@ fun NovelReaderScreen(
 
     // A font size or theme change reflows every block, so the pixel offset the list is holding now refers to
     // different text. Re-applying the logical position is what keeps the reader on the same paragraph.
-    var settingsChangeCount = remember { 0 }
+    var settingsChangeCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(listState, effectiveSettings) {
         val content = readable ?: return@LaunchedEffect
         // The first emission is the initial composition, which the restore above already handled.
@@ -199,15 +219,38 @@ fun NovelReaderScreen(
     }
 
     when (surface) {
-        is ReaderSurfaceState.Content -> ChapterBody(
-            content = surface.content,
-            settings = effectiveSettings,
-            listState = listState,
-            contentPadding = NO_CONTENT_PADDING,
-            // The reader draws its own full-bleed background, so the system bars are consumed as padding
-            // rather than left to the host chrome: otherwise the chapter title sits under the status bar.
+        is ReaderSurfaceState.Content -> Box(
             modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars),
-        )
+        ) {
+            ChapterBody(
+                content = surface.content,
+                settings = effectiveSettings,
+                listState = listState,
+                contentPadding = NO_CONTENT_PADDING,
+                shareLabel = shareLabel,
+                onShareSelectedText = onShareSelectedText,
+                modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                    // Child selection and scrolling consume their gestures; only a completed tap reaches here.
+                    detectTapGestures { offset ->
+                        if (isReaderControlsTap(offset.y, size.height)) controlsVisible = !controlsVisible
+                    }
+                },
+            )
+            // Overlay instead of resizing the list: opening controls must not change the reading position.
+            Surface(
+                modifier = Modifier.align(if (controlsVisible) Alignment.TopCenter else Alignment.BottomEnd),
+            ) {
+                Row(horizontalArrangement = Arrangement.End) {
+                    if (controlsVisible) {
+                        TextButton(onClick = onBack) { Text(backLabel) }
+                        TextButton(onClick = onSettings) { Text(settingsLabel) }
+                    } else {
+                        // A focusable alternative to the tap zone for keyboard and accessibility users.
+                        TextButton(onClick = { controlsVisible = true }) { Text(controlsLabel) }
+                    }
+                }
+            }
+        }
 
         ReaderSurfaceState.Error -> ReaderErrorState(
             message = errorMessage.orEmpty(),
@@ -221,6 +264,10 @@ fun NovelReaderScreen(
         ReaderSurfaceState.Loading -> LoadingPlaceholder(theme = effectiveSettings.theme, modifier = modifier)
     }
 }
+
+/** The midpoint belongs to the lower half; coordinates outside a measured viewport are not taps. */
+internal fun isReaderControlsTap(y: Float, height: Int): Boolean =
+    height > 0 && y >= 0f && y < height / 2f
 
 /**
  * Moves the list to [position], which is expressed as a block index plus a fraction of that block.

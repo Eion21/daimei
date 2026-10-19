@@ -5,7 +5,6 @@ query AniListSearchManga(
     media(
       search: $search,
       type: MANGA,
-      format_not_in: [NOVEL],
     ) {
       ...MangaFragment
     }

@@ -87,11 +87,16 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
 
     private fun networkIssue(): String? {
         val state = applicationContext.activeNetworkState()
-        return when {
-            !state.isOnline -> applicationContext.getString(R.string.download_notifier_no_network)
-            downloadPreferences.downloadOnlyOverWifi.get() && !state.isWifi ->
-                applicationContext.getString(R.string.download_notifier_text_only_wifi)
-            else -> null
+        return when (
+            downloadBlockReason(
+                isOnline = state.isOnline,
+                isWifi = state.isWifi,
+                downloadOnlyOverWifi = downloadPreferences.downloadOnlyOverWifi.get(),
+            )
+        ) {
+            DownloadBlockReason.NO_NETWORK -> applicationContext.getString(R.string.download_notifier_no_network)
+            DownloadBlockReason.ONLY_WIFI -> applicationContext.getString(R.string.download_notifier_text_only_wifi)
+            null -> null
         }
     }
 
@@ -113,4 +118,23 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
                 .map { list -> list.count { it.state == WorkInfo.State.RUNNING } == 1 }
         }
     }
+}
+
+/** Why a download cannot start right now, or null when it can. Shared so the worker and the queue screen cannot diverge. */
+enum class DownloadBlockReason {
+    NO_NETWORK,
+    ONLY_WIFI,
+}
+
+/**
+ * The condition itself, free of Android types so it can be unit tested and shared.
+ */
+fun downloadBlockReason(
+    isOnline: Boolean,
+    isWifi: Boolean,
+    downloadOnlyOverWifi: Boolean,
+): DownloadBlockReason? = when {
+    !isOnline -> DownloadBlockReason.NO_NETWORK
+    downloadOnlyOverWifi && !isWifi -> DownloadBlockReason.ONLY_WIFI
+    else -> null
 }

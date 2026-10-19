@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.download
 import android.view.LayoutInflater
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,7 +48,10 @@ import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.NestedMenuItem
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.data.download.DownloadBlockReason
+import eu.kanade.tachiyomi.data.download.downloadBlockReason
 import eu.kanade.tachiyomi.databinding.DownloadListBinding
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import mihon.icons.materialsymbols.MaterialSymbols
@@ -70,6 +75,15 @@ object DownloadQueueScreen : Screen() {
         val downloadList by viewModel.state.collectAsStateWithLifecycle()
         val downloadCount by remember {
             derivedStateOf { downloadList.sumOf { it.subItems.size } }
+        }
+        val isDownloaderRunning by viewModel.isDownloaderRunning.collectAsStateWithLifecycle()
+        val context = LocalContext.current
+        val downloadOnlyOverWifi by viewModel.downloadOnlyOverWifi.collectAsStateWithLifecycle()
+        val blockReason by remember(downloadList, downloadOnlyOverWifi) {
+            derivedStateOf {
+                val state = context.activeNetworkState()
+                downloadBlockReason(state.isOnline, state.isWifi, downloadOnlyOverWifi)
+            }
         }
 
         val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
@@ -199,10 +213,9 @@ object DownloadQueueScreen : Screen() {
                 )
             },
             floatingActionButton = {
-                val isRunning by viewModel.isDownloaderRunning.collectAsStateWithLifecycle()
                 SmallExtendedFloatingActionButton(
                     text = {
-                        val id = if (isRunning) {
+                        val id = if (isDownloaderRunning) {
                             MR.strings.action_pause
                         } else {
                             MR.strings.action_resume
@@ -210,7 +223,7 @@ object DownloadQueueScreen : Screen() {
                         Text(text = stringResource(id))
                     },
                     icon = {
-                        val icon = if (isRunning) {
+                        val icon = if (isDownloaderRunning) {
                             MaterialSymbols.RoundedFilled.Pause
                         } else {
                             MaterialSymbols.RoundedFilled.PlayArrow
@@ -218,7 +231,7 @@ object DownloadQueueScreen : Screen() {
                         Icon(imageVector = icon, contentDescription = null)
                     },
                     onClick = {
-                        if (isRunning) {
+                        if (isDownloaderRunning) {
                             viewModel.pauseDownloads()
                         } else {
                             viewModel.startDownloads()
@@ -247,41 +260,58 @@ object DownloadQueueScreen : Screen() {
             val right = with(density) { contentPadding.calculateRightPadding(layoutDirection).toPx().roundToInt() }
             val bottom = with(density) { contentPadding.calculateBottomPadding().toPx().roundToInt() }
 
-            Box(modifier = Modifier.nestedScroll(nestedScrollConnection)) {
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth(),
-                    factory = { context ->
-                        viewModel.controllerBinding = DownloadListBinding.inflate(LayoutInflater.from(context))
-                        viewModel.adapter = DownloadAdapter(viewModel.listener)
-                        viewModel.controllerBinding.root.adapter = viewModel.adapter
-                        viewModel.adapter?.isHandleDragEnabled = true
-                        viewModel.controllerBinding.root.layoutManager = LinearLayoutManager(context)
+            Column {
+                val blockReasonValue = blockReason
+                if (!isDownloaderRunning && blockReasonValue != null) {
+                    val reasonRes = when (blockReasonValue) {
+                        DownloadBlockReason.NO_NETWORK -> MR.strings.download_notifier_no_network
+                        DownloadBlockReason.ONLY_WIFI -> MR.strings.download_notifier_text_only_wifi
+                    }
+                    Text(
+                        text = stringResource(reasonRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
 
-                        ViewCompat.setNestedScrollingEnabled(viewModel.controllerBinding.root, true)
+                Box(modifier = Modifier.nestedScroll(nestedScrollConnection)) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth(),
+                        factory = { context ->
+                            viewModel.controllerBinding = DownloadListBinding.inflate(LayoutInflater.from(context))
+                            viewModel.adapter = DownloadAdapter(viewModel.listener)
+                            viewModel.controllerBinding.root.adapter = viewModel.adapter
+                            viewModel.adapter?.isHandleDragEnabled = true
+                            viewModel.controllerBinding.root.layoutManager = LinearLayoutManager(context)
 
-                        scope.launch(Dispatchers.Main) {
-                            viewModel.getDownloadStatusFlow()
-                                .collect(viewModel::onStatusChange)
-                        }
-                        scope.launch(Dispatchers.Main) {
-                            viewModel.getDownloadProgressFlow()
-                                .collect(viewModel::onUpdateDownloadedPages)
-                        }
+                            ViewCompat.setNestedScrollingEnabled(viewModel.controllerBinding.root, true)
 
-                        viewModel.controllerBinding.root
-                    },
-                    update = {
-                        viewModel.controllerBinding.root
-                            .updatePadding(
-                                left = left,
-                                top = top,
-                                right = right,
-                                bottom = bottom,
-                            )
+                            scope.launch(Dispatchers.Main) {
+                                viewModel.getDownloadStatusFlow()
+                                    .collect(viewModel::onStatusChange)
+                            }
+                            scope.launch(Dispatchers.Main) {
+                                viewModel.getDownloadProgressFlow()
+                                    .collect(viewModel::onUpdateDownloadedPages)
+                            }
 
-                        viewModel.adapter?.updateDataSet(downloadList)
-                    },
-                )
+                            viewModel.controllerBinding.root
+                        },
+                        update = {
+                            viewModel.controllerBinding.root
+                                .updatePadding(
+                                    left = left,
+                                    top = top,
+                                    right = right,
+                                    bottom = bottom,
+                                )
+
+                            viewModel.adapter?.updateDataSet(downloadList)
+                        },
+                    )
+                }
             }
         }
     }

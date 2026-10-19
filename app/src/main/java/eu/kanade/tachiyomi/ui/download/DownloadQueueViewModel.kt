@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tachiyomi.domain.download.service.DownloadPreferences
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -35,6 +36,7 @@ import kotlin.time.Duration.Companion.seconds
 @ContributesIntoMap(AppScope::class)
 class DownloadQueueViewModel(
     private val downloadManager: DownloadManager,
+    private val downloadPreferences: DownloadPreferences,
 ) : ViewModel() {
 
     val state: StateFlow<List<DownloadHeaderItem>> = downloadManager.queueState
@@ -49,6 +51,15 @@ class DownloadQueueViewModel(
         }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), emptyList())
+
+    /** Whether downloads are restricted to Wi-Fi; the queue screen needs it to explain a block. */
+    val downloadOnlyOverWifi: StateFlow<Boolean> = downloadPreferences.downloadOnlyOverWifi
+        .changes()
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5.seconds),
+            downloadPreferences.downloadOnlyOverWifi.get(),
+        )
 
     lateinit var controllerBinding: DownloadListBinding
 

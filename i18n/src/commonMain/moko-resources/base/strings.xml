@@ -874,7 +874,7 @@
     <string name="transition_pages_error">Failed to load pages: %1$s</string>
     <string name="novel_chapter_load_error">Couldn\'t load this chapter</string>
     <string name="novel_reader_controls">Reader controls</string>
-    <string name="novel_reader_interactions">Tap the upper half to show or hide controls. Long press text to select, copy or share it. Selection stays within a paragraph or heading.</string>
+    <string name="novel_reader_interactions">Tap the upper half to show or hide controls. Long press text to select, copy or share it. Drag to extend the selection across paragraphs.</string>
     <string name="novel_reader_font">Font</string>
     <string name="novel_reader_serif">Serif</string>
     <string name="novel_reader_sans_serif">Sans serif</string>

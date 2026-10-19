@@ -75,37 +75,49 @@ fun ChapterBody(
     )
     val dividerColor = colors.text.copy(alpha = DIVIDER_ALPHA)
 
-    LazyColumn(
-        modifier = modifier.background(colors.background),
-        state = listState,
-        contentPadding = contentPadding,
-        verticalArrangement = Arrangement.spacedBy(BLOCK_SPACING),
+    // One selection owner lets a drag cross paragraph and heading boundaries without changing list state.
+    val selection = rememberSelectionState()
+    SelectionContainer(
+        state = selection,
+        modifier = modifier.appendTextContextMenuComponents {
+            if (selection.selectedTexts.any { it.isNotEmpty() } && shareLabel.isNotEmpty()) {
+                item(key = ShareSelection, label = shareLabel) {
+                    onShareSelectedText(selection.selectedTexts.joinToString("\n") { it.text })
+                    close()
+                }
+            }
+        },
     ) {
-        // The key is the block's index, and it must be: Compose saves per-item state across process death in a
-        // Bundle, which rejects any custom type and would throw on the first layout pass. Within one chapter the
-        // block order never changes, so the index identifies a block as well as anything else could.
-        itemsIndexed(
-            items = content.blocks,
-            key = { index, _ -> index },
-        ) { _, block ->
-            Box(
-                modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .widthIn(max = effectiveSettings.maxTextWidthDp.dp)
-                        .fillMaxWidth()
-                        .padding(horizontal = effectiveSettings.horizontalMarginDp.dp),
+        LazyColumn(
+            modifier = Modifier.background(colors.background),
+            state = listState,
+            contentPadding = contentPadding,
+            verticalArrangement = Arrangement.spacedBy(BLOCK_SPACING),
+        ) {
+            // The key is the block's index, and it must be: Compose saves per-item state across process death in a
+            // Bundle, which rejects any custom type and would throw on the first layout pass. Within one chapter the
+            // block order never changes, so the index identifies a block as well as anything else could.
+            itemsIndexed(
+                items = content.blocks,
+                key = { index, _ -> index },
+            ) { _, block ->
+                Box(
+                    modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
                 ) {
-                    ChapterBlock(
-                        block = block,
-                        settings = effectiveSettings,
-                        paragraphStyle = paragraphStyle,
-                        textColor = colors.text,
-                        dividerColor = dividerColor,
-                        shareLabel = shareLabel,
-                        onShareSelectedText = onShareSelectedText,
-                    )
+                    Column(
+                        modifier = Modifier
+                            .widthIn(max = effectiveSettings.maxTextWidthDp.dp)
+                            .fillMaxWidth()
+                            .padding(horizontal = effectiveSettings.horizontalMarginDp.dp),
+                    ) {
+                        ChapterBlock(
+                            block = block,
+                            settings = effectiveSettings,
+                            paragraphStyle = paragraphStyle,
+                            textColor = colors.text,
+                            dividerColor = dividerColor,
+                        )
+                    }
                 }
             }
         }
@@ -119,17 +131,13 @@ private fun ChapterBlock(
     paragraphStyle: TextStyle,
     textColor: Color,
     dividerColor: Color,
-    shareLabel: String,
-    onShareSelectedText: (String) -> Unit,
 ) {
     when (block) {
-        is ContentBlock.Paragraph -> SelectableChapterText(block.text, paragraphStyle, shareLabel, onShareSelectedText)
+        is ContentBlock.Paragraph -> Text(text = block.text, style = paragraphStyle)
 
-        is ContentBlock.Heading -> SelectableChapterText(
+        is ContentBlock.Heading -> Text(
             text = block.text,
             style = settings.headingStyle(level = block.level, textColor = textColor),
-            shareLabel = shareLabel,
-            onShareSelectedText = onShareSelectedText,
         )
 
         is ContentBlock.Image -> AsyncImage(
@@ -139,30 +147,6 @@ private fun ChapterBlock(
         )
 
         ContentBlock.Divider -> HorizontalDivider(color = dividerColor)
-    }
-}
-
-/** Selection stays within a text block, so lazy, uncomposed blocks are never silently included in Select all. */
-@Composable
-private fun SelectableChapterText(
-    text: String,
-    style: TextStyle,
-    shareLabel: String,
-    onShareSelectedText: (String) -> Unit,
-) {
-    val selection = rememberSelectionState()
-    SelectionContainer(
-        state = selection,
-        modifier = Modifier.appendTextContextMenuComponents {
-            if (selection.selectedTexts.any { it.isNotEmpty() } && shareLabel.isNotEmpty()) {
-                item(key = ShareSelection, label = shareLabel) {
-                    onShareSelectedText(selection.selectedTexts.joinToString("\n") { it.text })
-                    close()
-                }
-            }
-        },
-    ) {
-        Text(text = text, style = style)
     }
 }
 

@@ -129,8 +129,8 @@ internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean):
  * hands over the message, the reason when there is one and the label for the action.
  *
  * Upper-half taps toggle an overlay toolbar without resizing the document; scrolling and native text selection
- * keep their own gestures. Labels and actions come from the resource-owning host, including a focusable controls
- * button for users who cannot use tap zones. Sharing is delegated with only the native selected substring.
+ * keep their own gestures. Labels and actions come from the resource-owning host. Controls remain hidden until
+ * an upper-half tap; no floating invoker covers the document. Sharing uses only the native selected text.
  *
  * @param initialPosition where to start reading, already expressed as a logical position.
  * @param errorMessage what to tell the reader when the chapter could not be opened. Non-null is what makes a null
@@ -237,16 +237,11 @@ fun NovelReaderScreen(
                 },
             )
             // Overlay instead of resizing the list: opening controls must not change the reading position.
-            Surface(
-                modifier = Modifier.align(if (controlsVisible) Alignment.TopCenter else Alignment.BottomEnd),
-            ) {
-                Row(horizontalArrangement = Arrangement.End) {
-                    if (controlsVisible) {
+            if (controlsVisible) {
+                Surface(modifier = Modifier.align(Alignment.TopCenter)) {
+                    Row(horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = onBack) { Text(backLabel) }
                         TextButton(onClick = onSettings) { Text(settingsLabel) }
-                    } else {
-                        // A focusable alternative to the tap zone for keyboard and accessibility users.
-                        TextButton(onClick = { controlsVisible = true }) { Text(controlsLabel) }
                     }
                 }
             }

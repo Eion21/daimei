@@ -8,7 +8,7 @@ import tachiyomi.domain.source.service.SourceManager
 @Inject
 class BackupFileValidator(
     private val sourceManager: SourceManager,
-    private val trackerManager: TrackerManager,
+    private val trackerManager: Lazy<TrackerManager>,
     private val backupDecoder: BackupDecoder,
 ) {
 
@@ -43,7 +43,7 @@ class BackupFileValidator(
             .map { it.syncId }
             .distinct()
         val missingTrackers = trackers
-            .mapNotNull { trackerManager.get(it.toLong()) }
+            .mapNotNull { trackerManager.value.get(it.toLong()) }
             .filter { !it.isLoggedIn }
             .map { it.name }
             .sorted()

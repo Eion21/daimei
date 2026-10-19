@@ -256,11 +256,13 @@ object DownloadQueueScreen : Screen() {
             val density = LocalDensity.current
             val layoutDirection = LocalLayoutDirection.current
             val left = with(density) { contentPadding.calculateLeftPadding(layoutDirection).toPx().roundToInt() }
-            val top = with(density) { contentPadding.calculateTopPadding().toPx().roundToInt() }
+            val top = contentPadding.calculateTopPadding()
             val right = with(density) { contentPadding.calculateRightPadding(layoutDirection).toPx().roundToInt() }
             val bottom = with(density) { contentPadding.calculateBottomPadding().toPx().roundToInt() }
 
-            Column {
+            // The top inset goes on the column instead of the list padding, so the block reason
+            // banner is laid out under the app bar instead of behind it.
+            Column(modifier = Modifier.padding(top = top)) {
                 val blockReasonValue = blockReason
                 if (!isDownloaderRunning && blockReasonValue != null) {
                     val reasonRes = when (blockReasonValue) {
@@ -303,7 +305,7 @@ object DownloadQueueScreen : Screen() {
                             viewModel.controllerBinding.root
                                 .updatePadding(
                                     left = left,
-                                    top = top,
+                                    top = 0,
                                     right = right,
                                     bottom = bottom,
                                 )

@@ -30,10 +30,8 @@ import java.io.File
  * package context built the same way the loader builds it, then proves the consequence: a specific Spanish sentence
  * from the repository's own synthetic `synthetic_spanish_novel.pdf` comes out with its accents intact.
  *
- * The fixture is self-authored and lives in `app/src/androidTest/assets`. It replaces the third-party
- * `t_Arifureta.pdf` sample, which is no longer tracked by git and must not be depended on; the
- * `synthetic_spanish_novel.pdf` copies in `app` and `novel-jabrascan-extension` are byte-identical
- * (a JVM test in `novel-jabrascan-extension` pins that).
+ * The self-authored synthetic fixture lives in `app/src/androidTest/assets`.
+ * It exercises accented Spanish text without depending on third-party book content.
  */
 @RunWith(AndroidJUnit4::class)
 class ExtensionPackageContextPdfBoxTest {

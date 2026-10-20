@@ -19,7 +19,7 @@ android {
 // to link with `LinkageError: ... resolves differently in interface`, naming two different Continuation classes.
 // The standard library is compile-time only here for exactly the same reason :novel-api is.
 configurations.configureEach {
-    if (isCanBeResolved && name.endsWith("RuntimeClasspath")) {
+    if (isCanBeResolved && (name == "debugRuntimeClasspath" || name == "releaseRuntimeClasspath")) {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
         exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
     }
@@ -44,4 +44,8 @@ dependencies {
     // androidx.appcompat drags jspecify in transitively; an extension APK has to declare it.
     // Annotations only: nothing is packaged.
     compileOnly("org.jspecify:jspecify:1.0.0")
+
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.kotlinx.coroutines.core)
 }

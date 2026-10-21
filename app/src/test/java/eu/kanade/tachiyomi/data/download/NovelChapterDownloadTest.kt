@@ -14,20 +14,23 @@ import io.mockk.mockk
 import io.mockk.spyk
 import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import nl.adaptivity.xmlutil.serialization.XML
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -314,21 +317,57 @@ class NovelChapterDownloadTest {
         coVerify(exactly = 0) { cache.addChapter(any(), any(), any()) }
     }
 
-    private fun TestScope.downloader(): Downloader = Downloader(
-        scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
-        context = mockk<Context>(relaxed = true),
-        provider = provider,
-        cache = cache,
-        sourceManager = mockk(relaxed = true),
-        chapterCache = mockk(relaxed = true),
-        downloadPreferences = DownloadPreferences(InMemoryPreferenceStore()),
-        xml = mockk<XML>(relaxed = true),
-        getCategories = mockk(relaxed = true),
-        getTracks = mockk(relaxed = true),
-        store = mockk(relaxed = true),
-        notifier = notifier,
-        getChapterContent = getChapterContent,
-    )
+    @Test
+    fun `the downloader fixture waits for queue restoration before returning`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val restoreEntered = CompletableDeferred<Unit>()
+            val releaseRestore = CompletableDeferred<Unit>()
+            val restoredDownload = downloadFor(novelChapter())
+            val store = mockk<DownloadStore>(relaxed = true)
+            coEvery { store.restore() } coAnswers {
+                restoreEntered.complete(Unit)
+                releaseRestore.await()
+                listOf(restoredDownload)
+            }
+            val initializing = async { downloader(store) }
+
+            try {
+                restoreEntered.await()
+                runCurrent()
+                assertFalse(initializing.isCompleted, "the fixture returned while queue restoration was suspended")
+            } finally {
+                releaseRestore.complete(Unit)
+                // The public queue also signals restoration with the detached fixture used for RED, so an
+                // assertion failure cannot remove Main while startup is still waiting to publish its queue.
+                initializing.await().queueState.first { it == listOf(restoredDownload) }
+            }
+
+            assertEquals(listOf(restoredDownload), initializing.await().queueState.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    private suspend fun downloader(store: DownloadStore = mockk(relaxed = true)): Downloader = coroutineScope {
+        // Startup switches from Main to real IO and back. Await its child job here so the tests cannot reset
+        // Main with restoration still running; scope ownership also propagates startup failures to runTest.
+        Downloader(
+            scope = this,
+            context = mockk<Context>(relaxed = true),
+            provider = provider,
+            cache = cache,
+            sourceManager = mockk(relaxed = true),
+            chapterCache = mockk(relaxed = true),
+            downloadPreferences = DownloadPreferences(InMemoryPreferenceStore()),
+            xml = mockk<XML>(relaxed = true),
+            getCategories = mockk(relaxed = true),
+            getTracks = mockk(relaxed = true),
+            store = store,
+            notifier = notifier,
+            getChapterContent = getChapterContent,
+        )
+    }
 
     /**
      * A manager whose provider really finds [dir], rather than one whose lookup is stubbed to an answer.

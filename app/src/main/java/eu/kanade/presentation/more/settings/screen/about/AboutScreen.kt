@@ -63,6 +63,16 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.time.Instant
 
+internal fun shouldShowWhatsNew(isDebug: Boolean, releaseUrl: String): Boolean {
+    if (isDebug || releaseUrl.isBlank()) return false
+    if (!releaseUrl.startsWith("https://github.com/")) return true
+
+    val repository = releaseUrl.removePrefix("https://github.com/")
+        .substringBefore("/releases/tag/")
+        .split('/')
+    return repository.size == 2 && repository.all { it.isNotBlank() }
+}
+
 object AboutScreen : Screen() {
 
     @Composable
@@ -101,6 +111,13 @@ object AboutScreen : Screen() {
                             val deviceInfo = crashLogUtil.getDebugInfo()
                             context.copyToClipboard("Debug information", deviceInfo)
                         },
+                    )
+                }
+
+                item {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.about_mihon_credit),
+                        onPreferenceClick = { uriHandler.openUri("https://github.com/mihonapp/mihon") },
                     )
                 }
 
@@ -143,7 +160,7 @@ object AboutScreen : Screen() {
                     }
                 }
 
-                if (!BuildConfig.DEBUG) {
+                if (shouldShowWhatsNew(isDebug = BuildConfig.DEBUG, releaseUrl = RELEASE_URL)) {
                     item {
                         TextPreferenceWidget(
                             title = stringResource(MR.strings.whats_new),

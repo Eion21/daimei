@@ -12,9 +12,14 @@ import okhttp3.Response
 import okhttp3.ResponseBody
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 
 /**
  * The failure contract of the host network, which is the part a caller cannot see any other way.
@@ -25,8 +30,8 @@ import java.io.IOException
  * this that swallowed the failure was how a chapter page got cached as an empty chapter and left a
  * black screen, which is the regression these assertions guard.
  *
- * OkHttp is mocked at its own boundary ([OkHttpClient], [Call]) but the [Response] is real, so the
- * `isSuccessful` and body-reading the class actually relies on are the real ones.
+ * Failure tests mock OkHttp at its boundary ([OkHttpClient], [Call]) with real [Response] bodies.
+ * Header tests use the default client against a loopback HTTP server to verify the actual wire headers.
  */
 class HostNovelNetworkTest {
 
@@ -82,6 +87,94 @@ class HostNovelNetworkTest {
 
         assertThrows(IOException::class.java) {
             runBlocking { network.fetchBytes("http://example.com/missing.pdf") }
+        }
+    }
+
+    @Test
+    fun `default User-Agent identifies Daimei on the wire for text and byte fetches`() {
+        for (fetchBytes in listOf(false, true)) {
+            val servedBody = "chapter text".toByteArray(Charsets.UTF_8)
+            LoopbackResponse(servedBody).use { server ->
+                val network = HostNovelNetwork()
+
+                if (fetchBytes) {
+                    assertArrayEquals(servedBody, runBlocking { network.fetchBytes(server.url) })
+                } else {
+                    assertEquals("chapter text", runBlocking { network.fetch(server.url) })
+                }
+
+                assertEquals(
+                    listOf("Daimei-NovelExtension/1.2 (host-provided network)"),
+                    server.headerValues("User-Agent"),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `caller User-Agent overrides the default and additional headers reach the wire for both fetches`() {
+        for (fetchBytes in listOf(false, true)) {
+            val servedBody = "chapter text".toByteArray(Charsets.UTF_8)
+            LoopbackResponse(servedBody).use { server ->
+                val network = HostNovelNetwork()
+                val headers = mapOf("uSeR-aGeNt" to "Extension-Test/1.0", "X-Novel-Test" to "caller-value")
+
+                if (fetchBytes) {
+                    assertArrayEquals(servedBody, runBlocking { network.fetchBytes(server.url, headers) })
+                } else {
+                    assertEquals("chapter text", runBlocking { network.fetch(server.url, headers) })
+                }
+
+                assertEquals(listOf("Extension-Test/1.0"), server.headerValues("User-Agent"))
+                assertEquals(listOf("caller-value"), server.headerValues("X-Novel-Test"))
+            }
+        }
+    }
+
+    private class LoopbackResponse(body: ByteArray) : AutoCloseable {
+        private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).apply {
+            soTimeout = 5_000
+        }
+        val url = "http://127.0.0.1:${server.localPort}/chapter"
+        private val exchange = FutureTask {
+            server.accept().use { socket ->
+                socket.soTimeout = 5_000
+                val reader = socket.getInputStream().bufferedReader(Charsets.US_ASCII)
+                assertEquals("GET /chapter HTTP/1.1", reader.readLine())
+                val headers = buildList {
+                    while (true) {
+                        val line = checkNotNull(reader.readLine()) { "Connection closed before HTTP headers ended" }
+                        if (line.isEmpty()) break
+                        add(line)
+                    }
+                }
+                socket.getOutputStream().apply {
+                    write(
+                        (
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                "Content-Length: ${body.size}\r\n" +
+                                "Connection: close\r\n\r\n"
+                            ).toByteArray(Charsets.US_ASCII),
+                    )
+                    write(body)
+                    flush()
+                }
+                headers
+            }
+        }
+        private val worker = Thread(exchange, "novel-network-loopback").apply { start() }
+
+        fun headerValues(name: String): List<String> = exchange.get(5, TimeUnit.SECONDS)
+            .filter { it.substringBefore(':').equals(name, ignoreCase = true) }
+            .map { it.substringAfter(':').trim() }
+
+        override fun close() {
+            server.close()
+            worker.join(6_000)
+            assertFalse(worker.isAlive, "Loopback server thread did not finish")
+            // Surface server failures even when a client call or an assertion failed inside use.
+            exchange.get(1, TimeUnit.SECONDS)
         }
     }
 

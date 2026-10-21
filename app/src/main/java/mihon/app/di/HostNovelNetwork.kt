@@ -74,7 +74,7 @@ class HostNovelNetwork(
 
     companion object {
         /** The host's `User-Agent`. Says what this is rather than pretending to be a browser. */
-        const val USER_AGENT = "Mihon-NovelExtension/1.2 (host-provided network)"
+        const val USER_AGENT = "Daimei-NovelExtension/1.2 (host-provided network)"
 
         private const val USER_AGENT_HEADER = "User-Agent"
         private const val TIMEOUT_SECONDS = 30L

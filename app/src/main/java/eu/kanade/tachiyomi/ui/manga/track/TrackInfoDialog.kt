@@ -334,10 +334,12 @@ data class TrackStatusSelectorScreen(
             fun create(track: Track, trackerId: Long): Model
         }
 
-        val tracker = trackerManager.get(trackerId)!!
+        val tracker = trackerManager.get(trackerId)
 
         fun getSelections(): Map<Long, StringResource?> {
-            return tracker.getStatusList().associateWith { tracker.getStatus(it) }
+            return tracker?.let { service ->
+                service.getStatusList().associateWith { service.getStatus(it) }
+            }.orEmpty()
         }
 
         fun setSelection(selection: Long) {
@@ -346,7 +348,7 @@ data class TrackStatusSelectorScreen(
 
         fun setStatus() {
             appScope.launch {
-                tracker.setRemoteStatus(track.toDbTrack(), state.value.selection)
+                tracker?.setRemoteStatus(track.toDbTrack(), state.value.selection)
             }
         }
 
@@ -398,7 +400,7 @@ data class TrackChapterSelectorScreen(
             fun create(track: Track, trackerId: Long): Model
         }
 
-        val tracker = trackerManager.get(trackerId)!!
+        val tracker = trackerManager.get(trackerId)
 
         fun getRange(): Iterable<Int> {
             val endRange = if (track.totalChapters > 0) {
@@ -415,7 +417,7 @@ data class TrackChapterSelectorScreen(
 
         fun setChapter() {
             appScope.launch {
-                tracker.setRemoteLastChapterRead(track.toDbTrack(), state.value.selection)
+                tracker?.setRemoteLastChapterRead(track.toDbTrack(), state.value.selection)
             }
         }
 
@@ -467,14 +469,14 @@ data class TrackScoreSelectorScreen(
             fun create(track: Track, trackerId: Long): Model
         }
 
-        val tracker = trackerManager.get(trackerId)!!
+        val tracker = trackerManager.get(trackerId)
 
         init {
-            tracker.displayScore(track).let(::setSelection)
+            tracker?.displayScore(track)?.let(::setSelection)
         }
 
         fun getSelections(): List<String> {
-            return tracker.getScoreList()
+            return tracker?.getScoreList().orEmpty()
         }
 
         fun setSelection(selection: String) {
@@ -483,7 +485,7 @@ data class TrackScoreSelectorScreen(
 
         fun setScore() {
             appScope.launch {
-                tracker.setRemoteScore(track.toDbTrack(), state.value.selection)
+                tracker?.setRemoteScore(track.toDbTrack(), state.value.selection)
             }
         }
 
@@ -592,7 +594,7 @@ data class TrackDateSelectorScreen(
             fun create(track: Track, trackerId: Long, start: Boolean): Model
         }
 
-        private val tracker = trackerManager.get(trackerId)!!
+        private val tracker = trackerManager.get(trackerId)
 
         // In UTC
         val initialSelection: Long
@@ -607,14 +609,15 @@ data class TrackDateSelectorScreen(
             val localMillis = millis.convertEpochMillisZone(TimeZone.UTC, TimeZone.currentSystemDefault())
             appScope.launch {
                 if (start) {
-                    tracker.setRemoteStartDate(track.toDbTrack(), localMillis)
+                    tracker?.setRemoteStartDate(track.toDbTrack(), localMillis)
                 } else {
-                    tracker.setRemoteFinishDate(track.toDbTrack(), localMillis)
+                    tracker?.setRemoteFinishDate(track.toDbTrack(), localMillis)
                 }
             }
         }
 
         fun confirmRemoveDate(navigator: Navigator) {
+            val tracker = tracker ?: return
             navigator.push(TrackDateRemoverScreen(track, tracker.id, start))
         }
     }
@@ -697,16 +700,16 @@ data class TrackDateRemoverScreen(
             fun create(track: Track, trackerId: Long, start: Boolean): Model
         }
 
-        private val tracker = trackerManager.get(trackerId)!!
+        private val tracker = trackerManager.get(trackerId)
 
-        fun getServiceName() = tracker.name
+        fun getServiceName() = tracker?.name.orEmpty()
 
         fun removeDate() {
             appScope.launch {
                 if (start) {
-                    tracker.setRemoteStartDate(track.toDbTrack(), 0)
+                    tracker?.setRemoteStartDate(track.toDbTrack(), 0)
                 } else {
-                    tracker.setRemoteFinishDate(track.toDbTrack(), 0)
+                    tracker?.setRemoteFinishDate(track.toDbTrack(), 0)
                 }
             }
         }
@@ -777,11 +780,11 @@ data class TrackerSearchScreen(
             ): Model
         }
 
-        private val tracker = trackerManager.get(trackerId)!!
+        private val tracker = trackerManager.get(trackerId)
 
         private var searchJob: Job? = null
 
-        val supportsPrivateTracking = tracker.supportsPrivateTracking
+        val supportsPrivateTracking = tracker?.supportsPrivateTracking ?: false
 
         init {
             // Run search on first launch
@@ -792,6 +795,10 @@ data class TrackerSearchScreen(
 
         fun trackingSearch(query: String) {
             searchJob?.cancel()
+            val tracker = tracker ?: run {
+                state.update { it.copy(queryResult = Result.success(emptyList()), selected = null) }
+                return
+            }
             searchJob = viewModelScope.launch {
                 // To show loading state
                 state.update { it.copy(queryResult = null, selected = null) }
@@ -815,7 +822,7 @@ data class TrackerSearchScreen(
         }
 
         fun registerTracking(item: TrackSearch) {
-            appScope.launch { tracker.register(item, mangaId) }
+            appScope.launch { tracker?.register(item, mangaId) }
         }
 
         fun updateSelection(selected: TrackSearch) {
@@ -921,13 +928,14 @@ data class TrackerRemoveScreen(
             fun create(mangaId: Long, track: Track, trackerId: Long): Model
         }
 
-        private val tracker = trackerManager.get(trackerId)!!
+        private val tracker = trackerManager.get(trackerId)
 
-        fun getName() = tracker.name
+        fun getName() = tracker?.name.orEmpty()
 
         fun isDeletable() = tracker is DeletableTracker
 
         fun deleteMangaFromService() {
+            val tracker = tracker ?: return
             appScope.launch {
                 try {
                     (tracker as DeletableTracker).delete(track)
@@ -938,6 +946,7 @@ data class TrackerRemoveScreen(
         }
 
         fun unregisterTracking(serviceId: Long) {
+            if (tracker == null) return
             appScope.launch { deleteTrack.await(mangaId, serviceId) }
         }
     }

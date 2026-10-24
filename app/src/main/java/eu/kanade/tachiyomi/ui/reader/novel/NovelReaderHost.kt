@@ -55,6 +55,7 @@ fun NovelReaderHost(
     val content by viewModel.content.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val position by viewModel.position.collectAsStateWithLifecycle()
+    val titles by viewModel.titles.collectAsStateWithLifecycle()
 
     // Each preference is collected on its own, the way the manga reader's settings pages do it: reading them
     // through `changes()` is what lets a font size change reflow the open chapter instead of waiting for a
@@ -139,6 +140,8 @@ fun NovelReaderHost(
         backLabel = stringResource(MR.strings.action_bar_up_description),
         settingsLabel = stringResource(MR.strings.action_settings),
         controlsLabel = stringResource(MR.strings.novel_reader_controls),
+        workTitle = titles.work,
+        chapterTitle = titles.chapter,
         shareLabel = stringResource(MR.strings.action_share),
         onBack = { backDispatcher?.onBackPressed() },
         onSettings = { settingsVisible = true },

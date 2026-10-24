@@ -1,6 +1,9 @@
 package app.novel.reader.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +23,18 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,7 +73,9 @@ fun ChapterBody(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     shareLabel: String = "",
+    onReaderTap: (y: Float, height: Int) -> Unit = { _, _ -> },
     onShareSelectedText: (String) -> Unit = {},
+    onDiagnosticParagraphPositioned: ((Int, ContentBlock.Paragraph, LayoutCoordinates) -> Unit)? = null,
 ) {
     // Clamping lives in reader-core, so the UI cannot render an unreadable chapter from a corrupt setting.
     val effectiveSettings = settings.normalized()
@@ -77,9 +91,25 @@ fun ChapterBody(
 
     // One selection owner lets a drag cross paragraph and heading boundaries without changing list state.
     val selection = rememberSelectionState()
+    var selectionActiveAtDown by remember { mutableStateOf(false) }
+    val latestOnReaderTap by rememberUpdatedState(onReaderTap)
+    val tapModifier = modifier
+        .pointerInput(selection) {
+            // Observe before native selection handles DOWN; never consume or replace its gestures.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                selectionActiveAtDown = selection.selectedTexts.any { it.isNotEmpty() }
+            }
+        }
+        .pointerInput(selection) {
+            detectTapGestures { offset ->
+                // Native selection may already be cleared by UP. The DOWN snapshot owns this tap.
+                if (selectionActiveAtDown) selection.clear() else latestOnReaderTap(offset.y, size.height)
+            }
+        }
     SelectionContainer(
         state = selection,
-        modifier = modifier.appendTextContextMenuComponents {
+        modifier = tapModifier.appendTextContextMenuComponents {
             if (selection.selectedTexts.any { it.isNotEmpty() } && shareLabel.isNotEmpty()) {
                 item(key = ShareSelection, label = shareLabel) {
                     onShareSelectedText(selection.selectedTexts.joinToString("\n") { it.text })
@@ -100,7 +130,7 @@ fun ChapterBody(
             itemsIndexed(
                 items = content.blocks,
                 key = { index, _ -> index },
-            ) { _, block ->
+            ) { index, block ->
                 Box(
                     modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
                 ) {
@@ -116,6 +146,8 @@ fun ChapterBody(
                             paragraphStyle = paragraphStyle,
                             textColor = colors.text,
                             dividerColor = dividerColor,
+                            index = index,
+                            onDiagnosticParagraphPositioned = onDiagnosticParagraphPositioned,
                         )
                     }
                 }
@@ -131,9 +163,18 @@ private fun ChapterBlock(
     paragraphStyle: TextStyle,
     textColor: Color,
     dividerColor: Color,
+    index: Int,
+    onDiagnosticParagraphPositioned: ((Int, ContentBlock.Paragraph, LayoutCoordinates) -> Unit)?,
 ) {
     when (block) {
-        is ContentBlock.Paragraph -> Text(text = block.text, style = paragraphStyle)
+        is ContentBlock.Paragraph -> Text(
+            text = block.text,
+            style = paragraphStyle,
+            modifier = if (onDiagnosticParagraphPositioned == null) Modifier else Modifier.onGloballyPositioned {
+                // Observe the concrete Text, not its accessible node or a surrounding list item.
+                onDiagnosticParagraphPositioned(index, block, it)
+            },
+        )
 
         is ContentBlock.Heading -> Text(
             text = block.text,

@@ -56,6 +56,7 @@ import tachiyomi.domain.novel.interactor.SaveReadingProgress
 import tachiyomi.domain.novel.repository.ChapterContentRepository
 import tachiyomi.domain.novel.repository.ReadingProgress
 import tachiyomi.domain.novel.repository.ReadingProgressRepository
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
 import kotlin.time.Clock
 
@@ -233,6 +234,8 @@ class NovelReaderViewModelTest {
         chapters: ChapterRepository = FakeChapterRepository(),
         history: HistoryRepository = FakeHistoryRepository(),
         manga: Manga? = null,
+        mangas: MangaRepository = FakeMangaRepository(manga),
+        sourceManager: SourceManager = mockk(relaxed = true),
         trackChapter: TrackChapter = mockk(relaxed = true),
         trackPreferences: TrackPreferences = TrackPreferences(InMemoryPreferenceStore()),
         incognito: GetIncognitoState = mockk<GetIncognitoState> { coEvery { await(anyNullable()) } returns false },
@@ -251,8 +254,8 @@ class NovelReaderViewModelTest {
                 LibraryPreferences(InMemoryPreferenceStore()),
             ),
             getChapter = GetChapter(chapters),
-            getManga = GetManga(FakeMangaRepository(manga)),
-            sourceManager = mockk(relaxed = true),
+            getManga = GetManga(mangas),
+            sourceManager = sourceManager,
             getReadingProgress = GetReadingProgress(progress),
             saveReadingProgress = SaveReadingProgress(progress),
             updateChapter = UpdateChapter(chapters),
@@ -280,6 +283,45 @@ class NovelReaderViewModelTest {
             viewModel.content.collect { seen += it to viewModel.position.value }
         }
         return seen
+    }
+
+    @Test
+    fun `toolbar titles reuse the chapter and manga already queried while opening cached content`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val chapters = mockk<ChapterRepository> {
+                coEvery { getChapterById(CHAPTER_ID) } returns chapter(CHAPTER_ID).copy(name = "C3 Fixture Chapter")
+            }
+            val mangas = mockk<MangaRepository> {
+                coEvery { getMangaById(MANGA_ID) } returns manga().copy(title = "C3 Fixture Work")
+            }
+            val history = FakeHistoryRepository()
+            val progress = FakeProgressRepository(saved)
+            val viewModel = viewModel(
+                chapters = chapters,
+                mangas = mangas,
+                history = history,
+                progress = progress,
+                // A relaxed Source mock enters the download provider's real Dispatchers.IO, outside testScheduler.
+                // No installed source keeps this cached-content fixture deterministic, after both metadata reads.
+                sourceManager = mockk { coEvery { get(SOURCE_ID) } returns null },
+            )
+
+            viewModel.load(CHAPTER_ID)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { chapters.getChapterById(CHAPTER_ID) }
+            coVerify(exactly = 1) { mangas.getMangaById(MANGA_ID) }
+            assertEquals(content, viewModel.content.value)
+            assertEquals(savedPosition, viewModel.position.value)
+            assertEquals(1, history.updates.size)
+            assertTrue(progress.saved.isEmpty())
+            assertNull(viewModel.error.value)
+            assertFalse(viewModel.isLoading.value)
+            assertEquals(NovelReaderTitles("C3 Fixture Work", "C3 Fixture Chapter"), viewModel.titles.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
 
     @Test

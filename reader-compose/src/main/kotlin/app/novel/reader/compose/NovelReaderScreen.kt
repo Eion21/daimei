@@ -1,14 +1,13 @@
 package app.novel.reader.compose
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -24,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -34,14 +34,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.novel.reader.core.BlockLayout
 import app.novel.reader.core.ReaderSettings
 import app.novel.reader.core.ReaderTheme
 import app.novel.reader.core.ReadingPosition
 import app.novel.source.api.ChapterContent
+import app.novel.source.api.ContentBlock
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -132,6 +137,8 @@ internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean):
  * keep their own gestures. Labels and actions come from the resource-owning host. Controls remain hidden until
  * an upper-half tap; no floating invoker covers the document. Sharing uses only the native selected text.
  *
+ * @param workTitle the work's title, shown above the chapter title in the top overlay.
+ * @param chapterTitle the loaded chapter's title. Both titles ellipsize rather than widening the toolbar.
  * @param initialPosition where to start reading, already expressed as a logical position.
  * @param errorMessage what to tell the reader when the chapter could not be opened. Non-null is what makes a null
  *   content the error state rather than the loading one; a chapter with no blocks is the error state either way.
@@ -160,10 +167,18 @@ fun NovelReaderScreen(
     controlsLabel: String = "",
     onBack: () -> Unit = {},
     onSettings: () -> Unit = {},
+    workTitle: String = "",
+    chapterTitle: String = "",
     onShareSelectedText: (String) -> Unit = {},
+    // Optional layout observation for instrumentation; normal callers install no listeners.
+    onDiagnosticListState: ((LazyListState) -> Unit)? = null,
+    onDiagnosticParagraphPositioned: ((Int, ContentBlock.Paragraph, LayoutCoordinates) -> Unit)? = null,
 ) {
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    if (onDiagnosticListState != null) {
+        SideEffect { onDiagnosticListState(listState) }
+    }
     val latestOnProgress by rememberUpdatedState(onProgress)
     val effectiveSettings = settings.normalized()
 
@@ -229,18 +244,36 @@ fun NovelReaderScreen(
                 contentPadding = NO_CONTENT_PADDING,
                 shareLabel = shareLabel,
                 onShareSelectedText = onShareSelectedText,
-                modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                    // Child selection and scrolling consume their gestures; only a completed tap reaches here.
-                    detectTapGestures { offset ->
-                        if (isReaderControlsTap(offset.y, size.height)) controlsVisible = !controlsVisible
-                    }
+                onDiagnosticParagraphPositioned = onDiagnosticParagraphPositioned,
+                modifier = Modifier.fillMaxSize(),
+                onReaderTap = { y, height ->
+                    if (isReaderControlsTap(y, height)) controlsVisible = !controlsVisible
                 },
             )
             // Overlay instead of resizing the list: opening controls must not change the reading position.
             if (controlsVisible) {
-                Surface(modifier = Modifier.align(Alignment.TopCenter)) {
-                    Row(horizontalArrangement = Arrangement.End) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().semantics {
+                        isTraversalGroup = true
+                        paneTitle = controlsLabel
+                    },
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = onBack) { Text(backLabel) }
+                        Column(modifier = Modifier.weight(1f).padding(8.dp)) {
+                            Text(
+                                text = workTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = chapterTitle,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         TextButton(onClick = onSettings) { Text(settingsLabel) }
                     }
                 }

@@ -17,21 +17,59 @@ import android.view.Window
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.findRootCoordinates
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.novel.reader.compose.ChapterBody
 import app.novel.reader.compose.NovelReaderScreen
+import app.novel.reader.core.BlockLayout
 import app.novel.reader.core.ReaderSettings
 import app.novel.reader.core.ReadingPosition
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.ContentBlock
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /** Static content and callbacks only: no seeding, preferences, downloads, accounts or progress writes. */
@@ -41,16 +79,18 @@ class NovelReaderInteractionTest {
     private val automation get() = instrumentation.uiAutomation
     private val settings = mutableStateOf(ReaderSettings())
     private val progress = AtomicReference(ReadingPosition(0, 0f))
+    private val progressReported = AtomicBoolean(false)
     private val shared = AtomicReference<String?>(null)
     private var settingsOpened = false
     private var backPressed = false
     private var diagnosticsEnabled = false
     private var diagnosticWindow: Window? = null
+    private var geometryProbe: GeometryProbe? = null
     private val content = ChapterContent(
         blocks = List(80) { ContentBlock.Paragraph("Alpha beta gamma. Paragraph $it is isolated test content.") },
     )
 
-    private fun withReader(diagnostics: Boolean = false, test: () -> Unit) {
+    private fun withReader(diagnostics: Boolean = false, geometry: Boolean = false, test: () -> Unit) {
         diagnosticsEnabled = diagnostics
         // No chapter extra: the production host may read the missing-id error, but never gets readable content.
         // Replace its composition with the isolated surface before supplying any progress callback.
@@ -107,9 +147,12 @@ class NovelReaderInteractionTest {
                             }
                         }
                     }
+                    if (geometry) geometryProbe = GeometryProbe(activity.window.decorView)
                     activity.setContent {
                         MaterialTheme {
-                            NovelReaderScreen(
+                            if (geometry && geometryMode == "column-control") {
+                                ColumnControl(checkNotNull(geometryProbe))
+                            } else NovelReaderScreen(
                                 initialContent = content,
                                 initialPosition = ReadingPosition(0, 0f),
                                 settings = settings.value,
@@ -117,14 +160,18 @@ class NovelReaderInteractionTest {
                                 errorReason = null,
                                 retryLabel = "Retry",
                                 onRetry = {},
-                                onProgress = { progress.set(it) },
+                                onProgress = { progress.set(it); progressReported.set(true) },
                                 backLabel = "Reader back",
                                 settingsLabel = "Reader settings",
                                 controlsLabel = "Reader controls",
+                                workTitle = "C3 Fixture Work",
+                                chapterTitle = "C3 Fixture Chapter",
                                 shareLabel = "Share selection",
                                 onBack = { backPressed = true },
                                 onSettings = { settingsOpened = true },
                                 onShareSelectedText = { shared.set(it) },
+                                onDiagnosticListState = geometryProbe?.let { probe -> probe::observeList },
+                                onDiagnosticParagraphPositioned = geometryProbe?.let { probe -> probe::observeParagraph },
                             )
                         }
                     }
@@ -146,6 +193,7 @@ class NovelReaderInteractionTest {
                 } finally {
                     if (diagnostics) instrumentation.runOnMainSync { diagnosticWindow?.callback = originalCallback }
                     diagnosticWindow = null
+                    geometryProbe = null
                 }
             }
         } finally {
@@ -179,6 +227,100 @@ class NovelReaderInteractionTest {
         instrumentation.runOnMainSync { settings.value = settings.value.copy(fontSizeSp = 24f) }
         automation.waitForIdle(300, 5_000)
         assertEquals(before.blockIndex, progress.get().blockIndex)
+    }
+
+    @Test
+    fun singleFullWidthTopOverlayShowsTitlesWithoutMovingContentOrInsets() = withReader(diagnostics = true, geometry = true) {
+        fun bounds(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen)
+        fun document() = checkNotNull(find(automation.rootInActiveWindow) { it.isScrollable })
+        fun insets() = AtomicReference<android.graphics.Insets>().also { result ->
+            instrumentation.runOnMainSync {
+                result.set(checkNotNull(diagnosticWindow).decorView.rootWindowInsets
+                    .getInsets(android.view.WindowInsets.Type.systemBars()))
+            }
+        }.get()
+        val viewport = bounds(document())
+        val originalInsets = insets()
+        awaitUi("initial logical-position callback") { progressReported.get() }
+        val position = progress.get()
+        val probe = checkNotNull(geometryProbe)
+        val before = probe.snapshot("before")
+        assertFalse(hasText("C3 Fixture Work"))
+        assertFalse(hasText("C3 Fixture Chapter"))
+        repeat(2) {
+            tap(viewport.right - 2f, viewport.top + viewport.height() * 0.35f)
+            awaitUi("exact work and chapter toolbar titles") {
+                hasText("C3 Fixture Work") && hasText("C3 Fixture Chapter")
+            }
+            fun occurrences(node: AccessibilityNodeInfo?, text: String): Int {
+                if (node == null) return 0
+                return (if (node.isVisibleToUser && node.text?.toString() == text) 1 else 0) +
+                    (0 until node.childCount).sumOf { occurrences(node.getChild(it), text) }
+            }
+            for (text in listOf("Reader back", "C3 Fixture Work", "C3 Fixture Chapter", "Reader settings")) {
+                assertEquals("Exactly one toolbar label: $text", 1, occurrences(automation.rootInActiveWindow, text))
+            }
+            val back = checkNotNull(findVisibleAction("Reader back"))
+            val work = bounds(checkNotNull(findVisibleAction("C3 Fixture Work")))
+            val chapter = bounds(checkNotNull(findVisibleAction("C3 Fixture Chapter")))
+            val settings = bounds(checkNotNull(findVisibleAction("Reader settings")))
+            var bar = checkNotNull(back.parent)
+            while (!bounds(bar).contains(work) || !bounds(bar).contains(chapter) || !bounds(bar).contains(settings)) {
+                bar = checkNotNull(bar.parent) { "Back, titles and Settings must share one top bar" }
+            }
+            val barBounds = bounds(bar)
+            assertEquals(viewport.left, barBounds.left)
+            assertEquals(viewport.right, barBounds.right)
+            assertEquals(viewport.top, barBounds.top)
+            assertTrue("Toolbar must not span the document", barBounds.bottom < viewport.centerY())
+            assertTrue(bounds(back).right <= work.left)
+            assertTrue(work.right <= settings.left && chapter.right <= settings.left)
+            assertTrue(work.top <= chapter.top)
+            assertTrue(settings.centerX() > viewport.centerX())
+            assertStationary(before, probe.snapshot("after-show-$it"))
+            assertEquals(originalInsets, insets())
+            assertEquals(position, progress.get())
+            tap(viewport.right - 2f, viewport.top + viewport.height() * 0.35f)
+            awaitUi("reader toolbar hidden") {
+                !hasText("Reader settings") &&
+                    !hasText("C3 Fixture Work") &&
+                    !hasText("C3 Fixture Chapter")
+            }
+            assertFalse(hasText("Reader settings"))
+            assertFalse(hasText("C3 Fixture Work"))
+            assertFalse(hasText("C3 Fixture Chapter"))
+            assertStationary(before, probe.snapshot("after-hide-$it"))
+            assertEquals(originalInsets, insets())
+            assertEquals(position, progress.get())
+        }
+    }
+
+    @Test
+    fun firstUpperTapWithNativeSelectionClearsOnlyThenNextTapRevealsControls() = withReader {
+        val viewport = Rect().also {
+            checkNotNull(find(automation.rootInActiveWindow) { node -> node.isScrollable }).getBoundsInScreen(it)
+        }
+        val paragraph = checkNotNull(findVisibleAction("Alpha beta gamma. Paragraph 0 is isolated test content."))
+        val bounds = Rect().also(paragraph::getBoundsInScreen)
+        val downTime = SystemClock.uptimeMillis()
+        try {
+            touch(MotionEvent.ACTION_DOWN, bounds.left + 20f, bounds.top + 15f, downTime)
+            SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 100)
+        } finally {
+            touch(MotionEvent.ACTION_UP, bounds.left + 20f, bounds.top + 15f, downTime)
+        }
+        val copyLabel = instrumentation.targetContext.getString(android.R.string.copy)
+        awaitUi("native selection context menu before clearing") { hasText(copyLabel) }
+        assertFalse(hasText("Reader settings"))
+        // Outside the selected word and its native menu, still inside the reader's upper half.
+        val x = viewport.right - 2f
+        val y = viewport.top + viewport.height() * 0.35f
+        tap(x, y)
+        assertFalse("The first selection-clearing tap must not reveal controls", hasText("Reader settings"))
+        assertFalse("Native Copy menu must close with selection", hasText(copyLabel))
+        assertFalse(hasText("Share selection"))
+        tap(x, y)
+        awaitUi("controls after the next unselected upper-half tap") { hasText("Reader settings") }
     }
 
     @Test
@@ -285,6 +427,128 @@ class NovelReaderInteractionTest {
             assertEquals("Exact shared text across $paragraphCount paragraphs", expected, shared.get())
         }
     }
+
+    // Only the geometry method reads this argument; normal runs use the actual production surface.
+    private val geometryMode: String
+        get() = (InstrumentationRegistry.getArguments().getString("c3GeometryLayout") ?: "overlay").also {
+            check(it == "overlay" || it == "column-control") { "Unknown c3GeometryLayout: $it" }
+        }
+
+    /** Deliberately wrong layout, confined to this fixture: the real list loses space to the bar. */
+    @Composable
+    private fun ColumnControl(probe: GeometryProbe) {
+        val state = rememberLazyListState()
+        var visible by remember { mutableStateOf(false) }
+        SideEffect { probe.observeList(state) }
+        LaunchedEffect(state) {
+            snapshotFlow {
+                BlockLayout.toReadingPosition(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset,
+                    state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == state.firstVisibleItemIndex }?.size ?: 0)
+            }.collect { progress.set(it); progressReported.set(true) }
+        }
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
+            if (visible) Surface(Modifier.fillMaxWidth().semantics {
+                isTraversalGroup = true
+                paneTitle = "Reader controls"
+            }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { backPressed = true }) { Text("Reader back") }
+                    Column(Modifier.weight(1f).padding(8.dp)) {
+                        Text("C3 Fixture Work", style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("C3 Fixture Chapter", style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    TextButton(onClick = { settingsOpened = true }) { Text("Reader settings") }
+                }
+            }
+            ChapterBody(content = content, settings = settings.value, listState = state,
+                contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f).fillMaxWidth(),
+                shareLabel = "Share selection", onShareSelectedText = { shared.set(it) },
+                onReaderTap = { y, height -> if (y >= 0 && y < height / 2f) visible = !visible },
+                onDiagnosticParagraphPositioned = probe::observeParagraph)
+        }
+    }
+
+    private fun assertStationary(before: LayoutSample, after: LayoutSample) {
+        assertTrue("Same actual LazyListState reference", before.state === after.state)
+        for (index in before.anchors.indices) {
+            val first = before.anchors[index]
+            val next = after.anchors[index]
+            assertTrue("Same concrete paragraph $index", first.block === next.block && first.coordinates === next.coordinates)
+            assertEquals("C3 physical paragraph displacement: block $index root", first.root, next.root)
+            assertEquals("C3 physical paragraph displacement: block $index screen", first.screen, next.screen)
+        }
+        assertEquals("Actual LazyList viewport size", before.viewport, after.viewport)
+        assertEquals("Raw first visible item index", before.index, after.index)
+        assertEquals("Raw first visible item offset", before.offset, after.offset)
+    }
+
+    /** Default-off observation, no cache files/screenshots; read live coordinates on the main thread. */
+    private inner class GeometryProbe(private val decor: View) {
+        private var listState: LazyListState? = null
+        private val paragraphs = mutableMapOf<Int, Pair<ContentBlock.Paragraph, LayoutCoordinates>>()
+        private var baseline: LayoutSample? = null
+        fun observeList(state: LazyListState) { listState = state }
+        fun observeParagraph(index: Int, block: ContentBlock.Paragraph, coordinates: LayoutCoordinates) {
+            if (index in 0..1) paragraphs[index] = block to coordinates
+        }
+
+        fun snapshot(phase: String): LayoutSample {
+            val result = AtomicReference<Result<LayoutSample>>()
+            instrumentation.runOnMainSync {
+                result.set(runCatching {
+                    val state = checkNotNull(listState)
+                    val screen = IntArray(2).also(decor::getLocationOnScreen)
+                    val window = IntArray(2).also(decor::getLocationInWindow)
+                    val anchors = (0..1).map { index ->
+                        val (block, coordinates) = checkNotNull(paragraphs[index])
+                        check(block === content.blocks[index] && coordinates.isAttached)
+                        val root = coordinates.boundsInRoot()
+                        check(root.width > 0 && root.height > 0)
+                        val origin = coordinates.findRootCoordinates().localToWindow(Offset.Zero) +
+                            Offset((screen[0] - window[0]).toFloat(), (screen[1] - window[1]).toFloat())
+                        Anchor(block, coordinates, root, root.translate(origin))
+                    }
+                    LayoutSample(state, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset,
+                        state.layoutInfo.viewportSize, anchors)
+                })
+            }
+            val sample = result.get().getOrThrow()
+            if (baseline == null) baseline = sample
+            fun rect(value: androidx.compose.ui.geometry.Rect) = JSONArray(listOf(value.left, value.top, value.right, value.bottom))
+            val rows = sample.anchors.mapIndexed { index, anchor ->
+                val first = checkNotNull(baseline).anchors[index]
+                JSONObject().put("blockIndex", index).put("blockIdentity", System.identityHashCode(anchor.block))
+                    .put("sameBlockReference", first.block === anchor.block)
+                    .put("sameCoordinatesReference", first.coordinates === anchor.coordinates)
+                    .put("root", rect(anchor.root)).put("screen", rect(anchor.screen))
+            }
+            val raw = JSONObject().put("mode", geometryMode).put("phase", phase)
+                .put("listIdentity", System.identityHashCode(sample.state))
+                .put("sameListReference", sample.state === checkNotNull(baseline).state)
+                .put("index", sample.index).put("offset", sample.offset)
+                .put("viewport", JSONArray(listOf(sample.viewport.width, sample.viewport.height)))
+                .put("anchors", JSONArray(rows))
+            instrumentation.sendStatus(0, Bundle().apply { putString("stream", "\nC3_LAYOUT $raw\n") })
+            return sample
+        }
+    }
+
+    private data class Anchor(
+        val block: ContentBlock.Paragraph,
+        val coordinates: LayoutCoordinates,
+        val root: androidx.compose.ui.geometry.Rect,
+        val screen: androidx.compose.ui.geometry.Rect,
+    )
+
+    private data class LayoutSample(
+        val state: LazyListState,
+        val index: Int,
+        val offset: Int,
+        val viewport: IntSize,
+        val anchors: List<Anchor>,
+    )
 
     private fun tap(x: Float, y: Float) {
         val time = SystemClock.uptimeMillis()

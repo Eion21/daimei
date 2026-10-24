@@ -46,6 +46,9 @@ import kotlin.time.Instant
  */
 data class NovelChapterError(val reason: String?)
 
+/** Titles from the chapter and work metadata already read when resolving the document. */
+data class NovelReaderTitles(val work: String = "", val chapter: String = "")
+
 /**
  * State for one novel chapter.
  *
@@ -75,6 +78,11 @@ class NovelReaderViewModel(
     private val context: Context,
     @AppCoroutineScope private val appScope: CoroutineScope,
 ) : ViewModel() {
+
+    private val _titles = MutableStateFlow(NovelReaderTitles())
+
+    /** Metadata for the published content; resolving it never adds a chapter or work lookup. */
+    val titles: StateFlow<NovelReaderTitles> = _titles.asStateFlow()
 
     private val _content = MutableStateFlow<ChapterContent?>(null)
 
@@ -140,7 +148,8 @@ class NovelReaderViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val loaded = resolveContent(chapterId)
+                var loadedTitles = NovelReaderTitles()
+                val loaded = resolveContent(chapterId) { loadedTitles = it }
                 if (loaded == null || loaded.blocks.isEmpty()) {
                     logcat(LogPriority.WARN) {
                         val blocks = loaded?.blocks?.size
@@ -174,6 +183,7 @@ class NovelReaderViewModel(
                     "[novel-progress] LOAD chapter=$chapterId blocks=${loaded.blocks.size} " +
                         "restored=$_position.value"
                 }
+                _titles.value = loadedTitles
                 _content.value = loaded
 
                 // Mihon writes history when the chapter opens, not when it is finished: `loadNewChapter` there calls
@@ -186,6 +196,7 @@ class NovelReaderViewModel(
                 blockCount = 0
                 _position.value = ReadingPosition.START
                 _content.value = null
+                _titles.value = NovelReaderTitles()
                 // The one failure that arrives with something to say, which is the same message the manga reader
                 // puts under its own retry button.
                 _error.value = NovelChapterError(reason = e.message)
@@ -222,8 +233,10 @@ class NovelReaderViewModel(
      * `:domain`, and `:domain` stays free of what a downloads folder is; the step in front of it is here, in `:app`,
      * where [DownloadProvider] and that concept already live.
      */
-    private suspend fun resolveContent(chapterId: Long): ChapterContent? =
-        downloadedContent(chapterId) ?: getChapterContent.await(chapterId)
+    private suspend fun resolveContent(
+        chapterId: Long,
+        onTitles: (NovelReaderTitles) -> Unit,
+    ): ChapterContent? = downloadedContent(chapterId, onTitles) ?: getChapterContent.await(chapterId)
 
     /**
      * The chapter's text out of its downloaded file, or null when there is none to read.
@@ -232,9 +245,10 @@ class NovelReaderViewModel(
      * chapter whose file vanished is a chapter that has to be answered by the cache or the source — so this only
      * ever *adds* an answer, and never turns one into a failure.
      */
-    private suspend fun downloadedContent(chapterId: Long): ChapterContent? {
+    private suspend fun downloadedContent(chapterId: Long, onTitles: (NovelReaderTitles) -> Unit): ChapterContent? {
         val chapter = getChapter.await(chapterId) ?: return null
         val manga = getManga.await(chapter.mangaId) ?: return null
+        onTitles(NovelReaderTitles(work = manga.title, chapter = chapter.name))
         val source = sourceManager.get(manga.source) ?: return null
         return downloadProvider.findDownloadedNovelContent(chapter, manga, source)
     }

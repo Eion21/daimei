@@ -2,6 +2,7 @@ package app.novel.source.http
 
 import app.novel.source.api.Chapter
 import app.novel.source.api.ChapterContent
+import app.novel.source.api.ContentBlock
 import app.novel.source.api.Novel
 import app.novel.source.api.NovelPage
 import app.novel.source.api.NovelSource
@@ -124,7 +125,15 @@ class HttpNovelSource(
             "The chapter page at $url parsed to no readable blocks, so it is not a chapter"
         }
 
-        return content
+        // Inline srcs are relative to the chapter document, not the library base or detail page.
+        // Resolve here, where the page URL is known, before the content is cached or handed to Coil.
+        return content.copy(blocks = content.blocks.map { block ->
+            if (block is ContentBlock.Image) {
+                block.copy(url = checkNotNull(url.resolve(block.url)) { "Invalid inline image URL: ${block.url}" }.toString())
+            } else {
+                block
+            }
+        })
     }
 
     /**

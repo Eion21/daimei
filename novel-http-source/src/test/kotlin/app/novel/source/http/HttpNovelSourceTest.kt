@@ -26,6 +26,31 @@ import kotlin.test.assertTrue
 class HttpNovelSourceTest {
 
     @Test
+    fun `inline images resolve against the actual chapter page without losing text or alt`() = runBlocking {
+        val html = """<div class="chapter-content"><p>Antes.</p>
+            <img src="illustrations/one.png" alt="Uno">
+            <img src="../images/two.png" alt="Dos">
+            <img src="/images/three.png" alt="Tres">
+            <img src="//cdn.example/four.png" alt="Cuatro">
+            <img src="https://cdn.example/five.png" alt="Cinco"><p>Después.</p></div>"""
+        val (source, wire) = source(overrides = mapOf(CHAPTER_PATH to html))
+        val content = source.getChapterContent(chapterOne())
+        assertEquals(listOf(CHAPTER_URL), wire.requestedUrls)
+        assertEquals(
+            listOf(
+                ContentBlock.Paragraph("Antes."),
+                ContentBlock.Image("$HOST/chapter/illustrations/one.png", "Uno"),
+                ContentBlock.Image("$HOST/images/two.png", "Dos"),
+                ContentBlock.Image("$HOST/images/three.png", "Tres"),
+                ContentBlock.Image("http://cdn.example/four.png", "Cuatro"),
+                ContentBlock.Image("https://cdn.example/five.png", "Cinco"),
+                ContentBlock.Paragraph("Después."),
+            ),
+            content.blocks,
+        )
+    }
+
+    @Test
     fun `popular requests the listing url with the source user agent`() = runBlocking {
         val (source, wire) = source()
 

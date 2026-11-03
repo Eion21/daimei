@@ -1004,6 +1004,72 @@ class NovelReaderInteractionTest {
         }
     }
 
+    @Test
+    fun s31RelativeInlineImageIsFetchedDecodedAndPaintedByCoil() {
+        val image = android.graphics.Bitmap.createBitmap(24, 24, android.graphics.Bitmap.Config.ARGB_8888)
+        image.eraseColor(android.graphics.Color.GREEN)
+        val bytes = java.io.ByteArrayOutputStream().also {
+            image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }.toByteArray()
+        image.recycle()
+        val server = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val worker = kotlin.concurrent.thread(name = "s31-inline-image") {
+            while (!server.isClosed) {
+                val socket = try { server.accept() } catch (closed: java.net.SocketException) { break }
+                socket.use {
+                    it.soTimeout = 5_000
+                    val input = it.getInputStream().bufferedReader()
+                    val path = input.readLine().split(' ')[1]
+                    while (!input.readLine().isNullOrEmpty()) { /* HTTP header boundary */ }
+                    requests += path
+                    val body = if (path == "/novel/chapter.html") {
+                        """<div class="chapter-content"><img src="../images/figure.png" alt="S31 inline illustration"><p>S31 image after text.</p></div>""".toByteArray()
+                    } else bytes
+                    val type = if (path.endsWith(".html")) "text/html" else "image/png"
+                    it.getOutputStream().apply {
+                        write("HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                        write(body)
+                        flush()
+                    }
+                }
+            }
+        }
+        try {
+            val base = "http://127.0.0.1:${server.localPort}/"
+            val source = app.novel.source.http.HttpNovelSource(base, okhttp3.OkHttpClient())
+            val content = kotlinx.coroutines.runBlocking {
+                source.getChapterContent(app.novel.source.api.Chapter("s31", "s31", "s31", "S31", url = "${base}novel/chapter.html"))
+            }
+            assertEquals("${base}images/figure.png", (content.blocks.first() as ContentBlock.Image).url)
+            val f = HostFixture(short = true, imageContent = content)
+            var painted = 0
+            withS31Host(f) {
+                awaitUi("S31 relative inline image is actually decoded and painted") {
+                    val bitmap = automation.takeScreenshot()
+                    if (bitmap == null) false else {
+                        val pixels = IntArray(bitmap.width * bitmap.height)
+                        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                        painted = pixels.count { pixel -> pixel == android.graphics.Color.GREEN }
+                        if (painted > 500) {
+                            val file = java.io.File(instrumentation.targetContext.cacheDir, "s31-image-${java.util.UUID.randomUUID()}.png")
+                            file.outputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out) }
+                            instrumentation.sendStatus(2, Bundle().apply { putString("stream", "S31 painted=$painted image proof=${file.path} requests=$requests\n") })
+                        }
+                        bitmap.recycle()
+                        painted > 500
+                    }
+                }
+                assertTrue(requests.contains("/images/figure.png"))
+                assertFalse(requests.contains("/novel/images/figure.png"))
+                assertTrue(painted > 500)
+            }
+        } finally {
+            server.close()
+            worker.join(1_000)
+        }
+    }
+
     private inner class S31Database(private val root: java.io.File) {
         private lateinit var driver: app.cash.sqldelight.db.SqlDriver
         private val repository = mihon.data.database.DatabaseRepositoryImpl(lazy { driver })
@@ -1120,12 +1186,13 @@ class NovelReaderInteractionTest {
         terminal: NovelNavigationStatus? = null,
         val backingProgress: ReadingProgressRepository? = null,
         ids: Pair<Long, Long> = -10_001L to -10_002L,
+        val imageContent: ChapterContent? = null,
         long: Boolean = false,
     ) {
         val oldId = ids.first
         val nextId = ids.second
         private val workId = -20_001L
-        val oldContent = ChapterContent(List(if (short) 1 else if (long) 80 else 24) { ContentBlock.Paragraph(paragraph("Old", it)) })
+        val oldContent = imageContent ?: ChapterContent(List(if (short) 1 else if (long) 80 else 24) { ContentBlock.Paragraph(paragraph("Old", it)) })
         val nextContent = if (equalContent) ChapterContent(oldContent.blocks.toList()) else
             ChapterContent(List(if (short) 1 else if (long) 80 else 24) { ContentBlock.Paragraph(paragraph("Next", it)) })
         private val old = Chapter.create().copy(id = oldId, mangaId = workId, name = "Old chapter",

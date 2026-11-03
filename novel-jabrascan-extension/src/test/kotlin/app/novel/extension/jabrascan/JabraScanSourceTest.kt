@@ -320,6 +320,24 @@ class JabraScanSourceTest {
         )
     }
 
+    @Test
+    fun `source accepts BOM documents and refuses duplicate chapter identities`() {
+        val valid = Harness(mapOf(INDEX_URL to "\uFEFF$INDEX", LIST_URL to "\uFEFF$MIXED_LIST"))
+        assertEquals(FILES, runBlocking { valid.source.getChapters(novel()) }.map { it.url })
+
+        val invalidList = """{"$CLAVE":[{"NombreArchivo":"${FILES[0]}"},""" +
+            """{"NombreArchivo":"${FILES[0]}","server":"local"}]}"""
+        val invalid = Harness(mapOf(INDEX_URL to INDEX, LIST_URL to invalidList))
+        val failure = assertThrows(IllegalStateException::class.java) {
+            runBlocking { invalid.source.getChapters(novel()) }
+        }
+        assertTrue(failure.message!!.contains(FILES[0]), failure.message)
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { invalid.source.getChapterContent(chapterOf(0)) }
+        }
+        assertTrue(invalid.network.byteFetches.isEmpty())
+    }
+
     private fun novel(): Novel = Novel("jabrascan", CLAVE, "La torre de cristal")
 
     /** A chapter of [CLAVE] as the source hands it out: id is work+file, url is the bare file name. */

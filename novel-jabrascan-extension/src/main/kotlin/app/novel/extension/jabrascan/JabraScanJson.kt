@@ -16,7 +16,7 @@ package app.novel.extension.jabrascan
  */
 internal object JabraScanJson {
 
-    /** Parses [text] into `Map<String, Any?>`, `List<Any?>`, `String`, `Double`, `Boolean` or null. */
+    /** Parses JSON, accepting one initial BOM and refusing duplicate decoded object keys or non-finite numbers. */
     fun parse(text: String, document: String): Any? = Parser(text, document).readDocument()
 
     @Suppress("UNCHECKED_CAST")
@@ -29,19 +29,20 @@ internal object JabraScanJson {
 
     /**
      * A decimal field, tolerating both a JSON number and a numeric string: `numCapitulo` is written as a
-     * string (`"0"`, `"1.1"`, `"78"`) in every measured `books/{clave}.json`.
+     * string (`"0"`, `"1.1"`, `"78"`) in every measured `books/{clave}.json`. Non-finite results are null.
      */
     fun asFloat(value: Any?): Float? = when (value) {
         is Double -> value.toFloat()
         is String -> value.trim().toFloatOrNull()
         else -> null
-    }
+    }?.takeIf(Float::isFinite)
 
     private class Parser(private val text: String, private val document: String) {
         private var index = 0
 
         /** Reads the document's single value and insists that nothing follows it. */
         fun readDocument(): Any? {
+            if (text.startsWith('\uFEFF')) index++
             skipWhitespace()
             if (atEnd()) return null
             val value = readAny()
@@ -82,6 +83,7 @@ internal object JabraScanJson {
                 skipWhitespace()
                 if (peek() != '"') fail("expected an object key")
                 val key = readString()
+                if (members.containsKey(key)) fail("duplicate object key '$key'")
                 skipWhitespace()
                 if (peek() != ':') fail("expected ':'")
                 index++
@@ -199,7 +201,8 @@ internal object JabraScanJson {
             if (peek() == '-' || peek() == '+') index++
             while (index < text.length && isNumberChar(text[index])) index++
             val literal = text.substring(start, index)
-            return literal.toDoubleOrNull() ?: error("$document: invalid number '$literal' at offset $start")
+            return literal.toDoubleOrNull()?.takeIf(Double::isFinite)
+                ?: error("$document: invalid number '$literal' at offset $start")
         }
 
         private fun isNumberChar(c: Char): Boolean =

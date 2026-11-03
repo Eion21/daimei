@@ -265,5 +265,78 @@ class JabraScanParsingTest {
         assertEquals("Obra mínima", JabraScanParsing.normalize("Obra   mínima"))
     }
 
+    @Test
+    fun `both JSON documents accept a leading BOM and preserve one inside a string`() {
+        assertEquals(
+            mapOf("A" to "books/\uFEFF.json"),
+            JabraScanParsing.parseChapterIndex("\uFEFF" + """{"A":"books/\uFEFF.json"}"""),
+        )
+        val chapters = JabraScanParsing.parseChapterList(
+            "\uFEFF" + """{"A":[{"NombreArchivo":"a.pdf","nombreCapitulo":"\uFEFFtitle"}]}""",
+            novel("A"),
+        )
+        assertEquals("\uFEFFtitle", chapters.single().title)
+    }
+
+    @Test
+    fun `duplicate JSON keys are refused even after null and after decoding escapes`() {
+        for ((json, document, parse) in listOf(
+            Triple("""{"A":null,"\u0041":"x"}""", "capitulos.json", { s: String ->
+                JabraScanParsing.parseChapterIndex(s)
+            }),
+            Triple("""{"A":[{"NombreArchivo":null,"NombreArchivo":"a.pdf"}]}""", "books/A.json", { s: String ->
+                JabraScanParsing.parseChapterList(s, novel("A"))
+            }),
+        )) {
+            val failure = assertThrows(IllegalStateException::class.java) { parse(json) }
+            assertTrue(failure.message!!.contains(document), failure.message)
+            assertTrue(
+                failure.message!!.contains(
+                    if (document ==
+                        "capitulos.json"
+                    ) {
+                        "A"
+                    } else {
+                        "NombreArchivo"
+                    },
+                ),
+                failure.message,
+            )
+        }
+    }
+
+    @Test
+    fun `duplicate catalogue and chapter identities fail naming document and identity`() {
+        val catalogue = """<obras><obra><clave>A</clave><nombreobra>One</nombreobra></obra>""" +
+            """<obra><clave>A</clave><nombreobra>Two</nombreobra></obra></obras>"""
+        val catalogueFailure =
+            assertThrows(IllegalStateException::class.java) { JabraScanParsing.parseCatalogue(catalogue) }
+        assertTrue(catalogueFailure.message!!.contains("obras.xml") && catalogueFailure.message!!.contains("A"))
+        val list = """{"A":[{"NombreArchivo":"a.pdf"},{"NombreArchivo":"a.pdf","server":"local"}]}"""
+        val chapterFailure =
+            assertThrows(IllegalStateException::class.java) {
+                JabraScanParsing.parseChapterListReport(list, novel("A"))
+            }
+        assertTrue(chapterFailure.message!!.contains("books/A.json") && chapterFailure.message!!.contains("a.pdf"))
+    }
+
+    @Test
+    fun `chapter numbers are finite or null and double overflow rejects the document`() {
+        val json = """{"A":[{"NombreArchivo":"a","numCapitulo":"Infinity"},""" +
+            """{"NombreArchivo":"b","numCapitulo":"NaN"},{"NombreArchivo":"c","numCapitulo":"1e39"},""" +
+            """{"NombreArchivo":"d","numCapitulo":1e39},{"NombreArchivo":"e","numCapitulo":0},""" +
+            """{"NombreArchivo":"f","numCapitulo":"-1.5"}]}"""
+        val chapters = JabraScanParsing.parseChapterList(json, novel("A"))
+        assertEquals(listOf(null, null, null, null, 0f, -1.5f), chapters.map { it.number })
+        assertEquals(listOf("a", "b", "c", "d", "e", "f"), chapters.map { it.url })
+        val failure = assertThrows(IllegalStateException::class.java) {
+            JabraScanParsing.parseChapterList("""{"A":[{"NombreArchivo":"x","numCapitulo":1e400}]}""", novel("A"))
+        }
+        assertTrue(
+            failure.message!!.contains("books/A.json") && failure.message!!.contains("number") &&
+                failure.message!!.contains("1e400"),
+        )
+    }
+
     private fun novel(id: String): Novel = Novel(sourceId = "jabrascan", id = id, title = "La torre de cristal")
 }

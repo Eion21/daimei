@@ -67,7 +67,8 @@ internal object JabraScanParsing {
      *
      * A catalogue whose every obra was discarded is not an empty catalogue but a broken one, and it
      * fails loudly: the reader would otherwise see a library that lost its novels. A document with no
-     * `<obra>` at all is still a normal empty page, because then nothing was lost.
+     * `<obra>` at all is still a normal empty page, because then nothing was lost. Duplicate claves are
+     * refused, including on hidden or discarded obras.
      */
     fun parseCatalogueReport(xml: String): CatalogueResult {
         val scan = readCatalogue(xml)
@@ -156,7 +157,8 @@ internal object JabraScanParsing {
      * consults it when the bytes are requested. Reading it here, pure and without a network, keeps that
      * decision off the request path and testable. A row's `server` is kept exactly as written (only
      * trimmed): which values are usable is the source's decision, not this layer's, and an unknown one
-     * must survive so the source can keep the row instead of silently dropping it.
+     * must survive so the source can keep the row instead of silently dropping it. Duplicate file names
+     * are refused; numbers that cannot be represented as finite floats leave the chapter's number null.
      */
     fun parseChapterListReport(json: String, novel: Novel): ChapterListResult {
         val document = "books/${novel.id}.json"
@@ -166,6 +168,7 @@ internal object JabraScanParsing {
         val servers = LinkedHashMap<String, String?>()
         for (value in chapters(root, novel.id, document)) {
             val row = chapterRow(value, novel) ?: continue
+            if (servers.containsKey(row.file)) error("$document: duplicate chapter file '${row.file}'")
             chapters += row.chapter
             servers[row.file] = row.server
         }
@@ -192,12 +195,14 @@ internal object JabraScanParsing {
     private fun readCatalogue(xml: String): CatalogueScan {
         val obras = mutableListOf<Obra>()
         val discarded = mutableListOf<DiscardedObra>()
+        val claves = mutableSetOf<String>()
         for (body in JabraScanXml.elements(xml, OBRA, CATALOGUE_DOCUMENT)) {
             val clave = text(body, CLAVE)
             if (clave == null) {
                 discarded += DiscardedObra(clave = null, reason = DiscardReason.MISSING_CLAVE)
                 continue
             }
+            if (!claves.add(clave)) error("$CATALOGUE_DOCUMENT: duplicate clave '$clave'")
             val title = JabraScanXml.elements(body, TITLE, CATALOGUE_DOCUMENT)
                 .map(JabraScanXml::text)
                 .map(::normalize)

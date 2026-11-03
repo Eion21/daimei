@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import mihon.core.common.extensions.toByteArray
 import mihon.core.common.extensions.toEpochMillisOrZero
+import tachiyomi.data.backup.ContentFingerprint
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.repository.ChapterRepository
@@ -55,7 +56,7 @@ class MangaBackupCreator(
             val chapters = chapterRepository.getChapterByMangaId(manga.id, applyScanlatorFilter = false)
             if (chapters.isNotEmpty()) {
                 mangaObject.chapters = chapters.map { it.toBackupChapter().withNovelPosition(it) }
-                novelContentsFor(manga, chapters)
+                novelContentsFor(manga, chapters, mangaObject.chapters.associateBy { it.url })
                     .takeIf { it.isNotEmpty() }
                     ?.let { mangaObject.novelContents = it }
             }
@@ -126,7 +127,11 @@ class MangaBackupCreator(
      * A chapter whose row exists but whose file will not decode is left out: the reader cannot open it either, so
      * carrying unreadable text would only make a backup look complete.
      */
-    private suspend fun novelContentsFor(manga: Manga, chapters: List<Chapter>): List<BackupNovelContent> {
+    private suspend fun novelContentsFor(
+        manga: Manga,
+        chapters: List<Chapter>,
+        backupChaptersByUrl: Map<String, BackupChapter>,
+    ): List<BackupNovelContent> {
         val novelChapters = chapters.filter { ChapterOpener.shouldOpenNovelReader(it) }
         if (novelChapters.isEmpty()) return emptyList()
 
@@ -134,10 +139,11 @@ class MangaBackupCreator(
         return novelChapters
             .filter { it.id in cachedChapterIds }
             .mapNotNull { chapter ->
-                chapterContentRepository.get(chapter.id)?.let {
+                chapterContentRepository.get(chapter.id)?.let { content ->
+                    backupChaptersByUrl.getValue(chapter.url).contentFingerprint = ContentFingerprint.of(content)
                     BackupNovelContent(
                         chapterUrl = chapter.url,
-                        content = json.encodeToString(ChapterContent.serializer(), it),
+                        content = json.encodeToString(ChapterContent.serializer(), content),
                     )
                 }
             }

@@ -120,7 +120,12 @@ android {
 
     buildTypes {
         val debug = getByName("debug") {
-            applicationIdSuffix = ".dev"
+            // Opt-in S28 instrumentation install; ordinary debug builds keep their existing ID.
+            val s28Isolated = providers.gradleProperty("s28Isolated")
+                .map { it.toBooleanStrict() }
+                .orElse(false)
+                .get()
+            applicationIdSuffix = if (s28Isolated) ".dev.s28" else ".dev"
             isPseudoLocalesEnabled = true
         }
         val release = getByName("release") {

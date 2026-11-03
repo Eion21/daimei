@@ -20,6 +20,7 @@ import tachiyomi.domain.backup.model.RestoredHistory
 import tachiyomi.domain.backup.model.RestoredManga
 import tachiyomi.domain.backup.repository.RestoreRepository
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
@@ -73,8 +74,9 @@ class RestoreRepositoryImpl(
         if (entry.categoryIds.isNotEmpty()) {
             mangaRepository.setMangaCategories(manga.id, entry.categoryIds)
         }
+        val localNovelState = snapshotNovelState(manga)
         restoreChapters(manga, entry.chapters)
-        restoreNovelState(manga, entry)
+        restoreNovelState(manga, entry, localNovelState)
         restoreTracking(manga, entry.tracks)
         restoreHistory(manga, entry.history)
         restoreExcludedScanlators(manga, entry.excludedScanlators)
@@ -246,7 +248,25 @@ class RestoreRepositoryImpl(
      * backup still restores, which is why [RestoredManga] carries the JSON undecoded rather than as a type that
      * would fail the whole file at deserialization.
      */
-    private suspend fun restoreNovelState(manga: Manga, entry: RestoredManga) {
+    private data class LocalNovelState(
+        val chapter: Chapter,
+        val progress: ReadingProgress?,
+        val content: ChapterContent?,
+    )
+
+    private suspend fun snapshotNovelState(manga: Manga): Map<String, LocalNovelState> {
+        return chapterRepository.getChapterByMangaId(manga.id)
+            .filter { !NovelMapper.sourceId(it).isNullOrBlank() }
+            .associate { chapter ->
+                chapter.url to LocalNovelState(
+                    chapter,
+                    readingProgressRepository.get(chapter.id),
+                    chapterContentRepository.get(chapter.id),
+                )
+            }
+    }
+
+    private suspend fun restoreNovelState(manga: Manga, entry: RestoredManga, local: Map<String, LocalNovelState>) {
         val novelChapters = chapterRepository.getChapterByMangaId(manga.id)
             .filter { !NovelMapper.sourceId(it).isNullOrBlank() }
         if (novelChapters.isEmpty()) return
@@ -259,23 +279,65 @@ class RestoreRepositoryImpl(
             decodeChapterContent(json)?.let { chapter.id to it }
         }.toMap()
 
-        entry.novelPositions.forEach { (chapterUrl, blockFraction) ->
-            val chapter = chapterByUrl[chapterUrl] ?: return@forEach
-            val blockCount = contentByChapterId[chapter.id]?.blocks?.size ?: 0
-            readingProgressRepository.save(
-                chapter.id,
-                ReadingProgress(
-                    blockIndex = chapter.lastPageRead,
-                    // A logical position has no pixels; only the Compose layer ever knows a block's height.
-                    blockOffsetPx = 0,
-                    blockFraction = blockFraction,
-                    percent = percentOf(blockIndex = chapter.lastPageRead, blockFraction, blockCount),
-                ),
-            )
+        val backupChapters = entry.chapters.groupBy { it.url }.mapValues { (_, copies) ->
+            copies.maxOf { it.lastPageRead }
+        }
+        val preserveContent = mutableSetOf<Long>()
+        chapterByUrl.forEach { (url, chapter) ->
+            val before = local[url]
+            val localProgress = before?.progress
+            val localIndex = localProgress?.blockIndex ?: before?.chapter?.lastPageRead ?: 0
+            val unknownFraction = before != null && localProgress == null && before.chapter.lastPageRead > 0
+            val localStart = !unknownFraction && localIndex == 0 && (localProgress?.blockFraction ?: 0f) == 0f
+            val backupIndex = backupChapters[url]
+            val backupFraction = entry.novelPositions[url]
+            val backupContent = contentByChapterId[chapter.id]
+            val declaredFingerprint = entry.novelContentFingerprints[url]
+            val compatible = before?.content != null && backupContent != null && declaredFingerprint != null &&
+                before.content.blocks.size == backupContent.blocks.size &&
+                ContentFingerprint.of(backupContent) == declaredFingerprint &&
+                ContentFingerprint.of(before.content) == declaredFingerprint
+
+            if (backupIndex == null || backupFraction == null) {
+                if (!localStart) {
+                    if (!compatible) preserveContent.add(chapter.id)
+                    if (chapter.lastPageRead != localIndex) {
+                        chapterRepository.update(ChapterUpdate(chapter.id) { lastPageRead = localIndex })
+                    }
+                }
+                return@forEach
+            }
+            val backupStart = backupIndex == 0 && backupFraction == 0f
+            // START over START with identical loaded content has nothing to rewrite.
+            if (localStart && backupStart && backupContent != null && before?.content == backupContent) {
+                preserveContent.add(chapter.id)
+            }
+            // An incomplete local position cannot be safely ordered against another position.
+            val localWins = unknownFraction || (!localStart && (backupStart || !compatible ||
+                localIndex > backupIndex || (localIndex == backupIndex && localProgress!!.blockFraction >= backupFraction)))
+            if (localWins) {
+                if (!compatible) preserveContent.add(chapter.id)
+                if (chapter.lastPageRead != localIndex) {
+                    chapterRepository.update(ChapterUpdate(chapter.id) { lastPageRead = localIndex })
+                }
+            } else {
+                if (chapter.lastPageRead != backupIndex) {
+                    chapterRepository.update(ChapterUpdate(chapter.id) { lastPageRead = backupIndex })
+                }
+                if (!(localStart && backupStart)) {
+                    val restored = ReadingProgress(
+                        blockIndex = backupIndex,
+                        blockOffsetPx = 0,
+                        blockFraction = backupFraction,
+                        percent = percentOf(backupIndex, backupFraction, backupContent?.blocks?.size ?: 0),
+                    )
+                    if (restored != localProgress) readingProgressRepository.save(chapter.id, restored)
+                }
+            }
         }
 
         contentByChapterId.forEach { (chapterId, content) ->
-            chapterContentRepository.save(chapterId, content)
+            if (chapterId !in preserveContent) chapterContentRepository.save(chapterId, content)
         }
     }
 

@@ -42,6 +42,7 @@ class BackupChapter(
      * what they were before this field existed, and a backup written before it restores as a fraction of 0.
      */
     @ProtoNumber(14) var lastBlockFraction: Float = 0F,
+    @ProtoNumber(15) var contentFingerprint: String? = null,
 ) {
     fun toChapterImpl(): Chapter {
         return Chapter.create().copy(

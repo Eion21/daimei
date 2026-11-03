@@ -7,10 +7,12 @@ import eu.kanade.tachiyomi.data.backup.models.BackupNovelContent
 import eu.kanade.tachiyomi.data.backup.models.toBackupChapter
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
 import mihon.core.common.extensions.JsonObjectEmptyBytes
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
@@ -44,6 +46,7 @@ class BackupSchemaCompatibilityTest {
         // Read off the wire rather than off the model, so this cannot be satisfied by renaming something.
         assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13), wireFieldNumbers(bytes))
         assertTrue(FRACTION_PROTO_NUMBER !in wireFieldNumbers(bytes))
+        assertTrue(FINGERPRINT_PROTO_NUMBER !in wireFieldNumbers(bytes))
     }
 
     @Test
@@ -63,8 +66,8 @@ class BackupSchemaCompatibilityTest {
         val numbers = protoNumbers(BackupChapter.serializer().descriptor)
 
         assertEquals(numbers.size, numbers.toSet().size, "a proto number is used twice on BackupChapter: $numbers")
-        assertEquals(listOf(13, FRACTION_PROTO_NUMBER), numbers.takeLast(2))
-        assertEquals(12, numbers.size)
+        assertEquals(listOf(13, FRACTION_PROTO_NUMBER, FINGERPRINT_PROTO_NUMBER), numbers.takeLast(3))
+        assertEquals(13, numbers.size)
     }
 
     @Test
@@ -131,6 +134,44 @@ class BackupSchemaCompatibilityTest {
         assertEquals(0f, decoded.lastBlockFraction)
         assertEquals("/chapter-12", decoded.url)
         assertEquals(12L, decoded.lastPageRead)
+    }
+
+    @Test
+    fun `legacy chapter decodes with an optional default content fingerprint`() {
+        val decoded = ProtoBuf.decodeFromByteArray(
+            BackupChapter.serializer(),
+            PRE_NOVEL_IMAGE_CHAPTER_HEX.hexToBytes(),
+        )
+        assertEquals("/chapter-12", decoded.url)
+        assertEquals("Chapter 12", decoded.name)
+        assertEquals(12L, decoded.lastPageRead)
+        assertEquals(0f, decoded.lastBlockFraction)
+        assertNull(decoded.contentFingerprint)
+
+        // Inspect the real serializer: this compiles before the field exists, without fabricating a fingerprint.
+        // That described the original descriptor-only check; the new nullable-property assertions require the stub.
+        // The default new field must stay off the legacy wire.
+        val descriptor = BackupChapter.serializer().descriptor
+        val index = (0 until descriptor.elementsCount).firstOrNull {
+            descriptor.getElementName(it) == "contentFingerprint"
+        }
+        assertTrue(index != null, "BackupChapter must have an optional contentFingerprint field")
+        val fingerprintIndex = requireNotNull(index)
+        assertTrue(descriptor.isElementOptional(fingerprintIndex), "contentFingerprint must have a default")
+        val number = descriptor.getElementAnnotations(fingerprintIndex).filterIsInstance<ProtoNumber>().single().number
+        assertTrue(number !in wireFieldNumbers(PRE_NOVEL_IMAGE_CHAPTER_HEX.hexToBytes()))
+        assertTrue(number !in wireFieldNumbers(ProtoBuf.encodeToByteArray(BackupChapter.serializer(), decoded)))
+    }
+
+    @Test
+    fun `synthetic old schema JSON without fingerprint decodes with null`() {
+        val oldJson = """{"url":"/chapter-12","name":"Chapter 12","lastPageRead":12}"""
+        val decoded = Json.decodeFromString(BackupChapter.serializer(), oldJson)
+
+        assertEquals("/chapter-12", decoded.url)
+        assertEquals("Chapter 12", decoded.name)
+        assertEquals(12L, decoded.lastPageRead)
+        assertNull(decoded.contentFingerprint)
     }
 
     @Test
@@ -255,6 +296,7 @@ class BackupSchemaCompatibilityTest {
 
     private companion object {
         const val FRACTION_PROTO_NUMBER = 14
+        const val FINGERPRINT_PROTO_NUMBER = 15
         const val NOVEL_CONTENTS_PROTO_NUMBER = 114
 
         /** `BackupChapter` as it serialized before the fraction existed: 62 bytes, eleven fields, no 14. */

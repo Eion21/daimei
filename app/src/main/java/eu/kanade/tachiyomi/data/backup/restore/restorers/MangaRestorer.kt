@@ -79,6 +79,9 @@ class MangaRestorer(
                 novelContents = backupManga.novelContents
                     .filter { it.chapterUrl in novelChapterUrls }
                     .associate { it.chapterUrl to it.content },
+                novelContentFingerprints = backupManga.chapters
+                    .filter { it.url in novelChapterUrls }
+                    .associate { it.url to it.contentFingerprint },
             )
         }
 

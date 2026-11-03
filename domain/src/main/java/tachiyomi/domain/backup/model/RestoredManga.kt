@@ -8,9 +8,9 @@ import kotlin.time.Instant
 /**
  * One library entry on its way back into the database.
  *
- * The two novel fields are keyed by chapter url rather than by id, because a backup cannot carry an id: ids are
+ * The novel fields are keyed by chapter url rather than by id, because a backup cannot carry an id: ids are
  * assigned by the database when the chapter row is written, which is after this object exists. The url is what
- * `chapter.remote_url` holds on both devices. Both default to empty, so a backup written before novels existed
+ * `chapter.remote_url` holds on both devices. They default to empty, so a backup written before novels existed
  * restores as an ordinary entry.
  */
 data class RestoredManga(
@@ -33,6 +33,8 @@ data class RestoredManga(
      * decode should cost one chapter rather than the whole restore.
      */
     val novelContents: Map<String, String> = emptyMap(),
+    /** Optional backup fingerprints, transported without interpreting them. */
+    val novelContentFingerprints: Map<String, String?> = emptyMap(),
 )
 
 data class RestoredHistory(

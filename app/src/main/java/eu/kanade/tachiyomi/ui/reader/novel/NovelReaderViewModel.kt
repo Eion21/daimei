@@ -10,29 +10,40 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import mihon.core.metro.AppCoroutineScope
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.novel.interactor.GetChapterContent
 import tachiyomi.domain.novel.interactor.GetReadingProgress
 import tachiyomi.domain.novel.interactor.SaveReadingProgress
 import tachiyomi.domain.novel.repository.ReadingProgress
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.LocalSource
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -49,6 +60,15 @@ data class NovelChapterError(val reason: String?)
 /** Titles from the chapter and work metadata already read when resolving the document. */
 data class NovelReaderTitles(val work: String = "", val chapter: String = "")
 
+/** Non-null Metro binding boundary; the nullable compatibility constructor is not an injection entry point. */
+@Inject
+internal class NovelReaderNavigationServices(
+    val chapters: GetChaptersByMangaId,
+    val reader: ReaderPreferences,
+    val base: BasePreferences,
+    val downloads: DownloadManager,
+)
+
 /**
  * State for one novel chapter.
  *
@@ -59,7 +79,6 @@ data class NovelReaderTitles(val work: String = "", val chapter: String = "")
  * only one class is allowed to know all of them: the downloaded file ([DownloadProvider]), the content cache and the
  * source ([GetChapterContent], in `:domain`). See [resolveContent].
  */
-@Inject
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class NovelReaderViewModel(
@@ -77,7 +96,137 @@ class NovelReaderViewModel(
     private val getIncognitoState: GetIncognitoState,
     private val context: Context,
     @AppCoroutineScope private val appScope: CoroutineScope,
+    // Nullable compatibility API for existing callers, deliberately not constructor-injected.
+    // Production injection delegates here through the non-null service wrapper below.
+    getChaptersByMangaId: GetChaptersByMangaId?,
+    readerPreferences: ReaderPreferences?,
+    basePreferences: BasePreferences?,
+    downloadManager: DownloadManager?,
 ) : ViewModel() {
+
+    @Inject
+    internal constructor(
+        getChapterContent: GetChapterContent,
+        downloadProvider: DownloadProvider,
+        getChapter: GetChapter,
+        getManga: GetManga,
+        sourceManager: SourceManager,
+        getReadingProgress: GetReadingProgress,
+        saveReadingProgress: SaveReadingProgress,
+        updateChapter: UpdateChapter,
+        upsertHistory: UpsertHistory,
+        trackChapter: TrackChapter,
+        trackPreferences: TrackPreferences,
+        getIncognitoState: GetIncognitoState,
+        context: Context,
+        @AppCoroutineScope appScope: CoroutineScope,
+        services: NovelReaderNavigationServices,
+    ) : this(
+        getChapterContent, downloadProvider, getChapter, getManga, sourceManager,
+        getReadingProgress, saveReadingProgress, updateChapter, upsertHistory,
+        trackChapter, trackPreferences, getIncognitoState, context, appScope,
+        services.chapters, services.reader, services.base, services.downloads,
+    )
+
+    /**
+     * Legacy single-chapter API. It can read downloaded/cache content without a chapter-list service.
+     * It deliberately cannot navigate: [navigationAvailable] advertises that capability and NEXT fails explicitly.
+     * Production injection uses the full constructor above; no fabricated preferences or download membership.
+     */
+    constructor(
+        getChapterContent: GetChapterContent,
+        downloadProvider: DownloadProvider,
+        getChapter: GetChapter,
+        getManga: GetManga,
+        sourceManager: SourceManager,
+        getReadingProgress: GetReadingProgress,
+        saveReadingProgress: SaveReadingProgress,
+        updateChapter: UpdateChapter,
+        upsertHistory: UpsertHistory,
+        trackChapter: TrackChapter,
+        trackPreferences: TrackPreferences,
+        getIncognitoState: GetIncognitoState,
+        context: Context,
+        appScope: CoroutineScope,
+    ) : this(
+        getChapterContent, downloadProvider, getChapter, getManga, sourceManager,
+        getReadingProgress, saveReadingProgress, updateChapter, upsertHistory,
+        trackChapter, trackPreferences, getIncognitoState, context, appScope,
+        null, null, null, null,
+    )
+
+    private class NavigationServices(
+        val chapters: GetChaptersByMangaId,
+        val reader: ReaderPreferences,
+        val base: BasePreferences,
+        val downloads: DownloadManager,
+    )
+
+    private val navigationServices = run {
+        val supplied = listOf(getChaptersByMangaId, readerPreferences, basePreferences, downloadManager)
+        require(supplied.all { it == null } || supplied.all { it != null }) {
+            "Novel navigation requires all four services; partial wiring is not supported"
+        }
+        if (getChaptersByMangaId == null) {
+            null // Explicit single-chapter capability, never a substitute navigation policy.
+        } else {
+            NavigationServices(
+                getChaptersByMangaId, requireNotNull(readerPreferences),
+                requireNotNull(basePreferences), requireNotNull(downloadManager),
+            )
+        }
+    }
+
+    internal val navigationAvailable: Boolean = navigationServices != null
+
+    private val _activeChapterId = MutableStateFlow<Long?>(null)
+    internal val activeChapterId: StateFlow<Long?> = _activeChapterId.asStateFlow()
+    private val _navigation = MutableStateFlow<NovelChapterNavigation?>(null)
+    internal val navigation: StateFlow<NovelChapterNavigation?> = _navigation.asStateFlow()
+    private val _isTransitioning = MutableStateFlow(false)
+    internal val isTransitioning: StateFlow<Boolean> = _isTransitioning.asStateFlow()
+    private val _nextChapterError = MutableStateFlow<NovelChapterError?>(null)
+    internal val nextChapterError: StateFlow<NovelChapterError?> = _nextChapterError.asStateFlow()
+
+    private val _previousChapterError = MutableStateFlow<NovelChapterError?>(null)
+    internal val previousChapterError: StateFlow<NovelChapterError?> = _previousChapterError.asStateFlow()
+
+    /** Both directions share C5's save-before-load and stale-publication protection. */
+    fun openNextChapter(position: ReadingPosition) = openAdjacentChapter(position, previous = false)
+
+    fun openPreviousChapter(position: ReadingPosition) = openAdjacentChapter(position, previous = true)
+
+    private fun openAdjacentChapter(position: ReadingPosition, previous: Boolean) {
+        check(navigationAvailable) { "Novel navigation is unavailable in the single-chapter constructor" }
+        if (_isTransitioning.value || _isLoading.value) return
+        val old = session ?: return
+        val destination = (if (previous) _navigation.value?.previous else _navigation.value?.next) ?: return
+        val transitionError = if (previous) _previousChapterError else _nextChapterError
+        val request = ++loadRequest
+        // Claim synchronously, before launch: two taps in the same frame still save/load only once.
+        _isTransitioning.value = true
+        _nextChapterError.value = null
+        _previousChapterError.value = null
+        viewModelScope.launch {
+            try {
+                persistProgress(old.id, position, old.blocks)
+                val resolved = resolveChapter(destination.id, startAtTop = !previous && destination.read)
+                if (request != loadRequest) return@launch
+                if (resolved == null) {
+                    transitionError.value = NovelChapterError(null)
+                    return@launch
+                }
+                publish(resolved, request)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to open adjacent novel chapter ${destination.id}" }
+                if (request == loadRequest) transitionError.value = NovelChapterError(e.message)
+            } finally {
+                if (request == loadRequest) _isTransitioning.value = false
+            }
+        }
+    }
 
     private val _titles = MutableStateFlow(NovelReaderTitles())
 
@@ -96,7 +245,7 @@ class NovelReaderViewModel(
 
     private val _position = MutableStateFlow(ReadingPosition.START)
 
-    /** Where to open the chapter. Not updated while reading — that is what [saveProgress] persists. */
+    /** Latest accepted logical position, also used when the retained session reattaches after rotation. */
     val position: StateFlow<ReadingPosition> = _position.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
@@ -109,20 +258,25 @@ class NovelReaderViewModel(
      */
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    /** Block count of the loaded chapter, kept so [saveProgress] can compute a percentage. */
-    private var blockCount = 0
+    /** Per-open lifecycle: a suspended OLD completion must never reset NEXT's history or completion guard. */
+    private class ChapterSession(val id: Long, val blocks: Int) {
+        var readStart: Instant? = Clock.System.now()
+        var historyWritten = false
+        var completionClaimed = false
+    }
 
-    /** When the current chapter was opened, so finishing it can report how long that took. */
-    private var chapterReadStartTime: Instant? = null
+    private var session: ChapterSession? = null
+    private var loadRequest = 0L
+    private var routeChapterId: Long? = null
+    private val progressWrites = Mutex()
 
-    /**
-     * The chapter whose history entry has already been written, or null.
-     *
-     * `history.upsert` adds to `read_duration` instead of replacing it, so the same session writing it twice would
-     * double the time. The host reports reaching the end of a chapter on every debounced progress emission, which
-     * makes a repeat the normal case rather than an edge one.
-     */
-    private var historyWrittenFor: Long? = null
+    private data class ResolvedChapter(
+        val id: Long,
+        val content: ChapterContent,
+        val titles: NovelReaderTitles,
+        val position: ReadingPosition,
+        val navigation: NovelChapterNavigation?,
+    )
 
     /**
      * Resolves the content and the saved position for [chapterId].
@@ -143,67 +297,92 @@ class NovelReaderViewModel(
      * an unread chapter on the History screen, which is the mirror image of the bug this same rule fixed earlier —
      * history that claims a read nobody did.
      */
+    /** Attach an Activity route once; navigation does not turn a reattachment into a fresh open. */
+    fun attach(chapterId: Long) {
+        if (routeChapterId == chapterId) return
+        routeChapterId = chapterId
+        load(chapterId)
+    }
+
     fun load(chapterId: Long) {
+        val request = ++loadRequest
         _error.value = null
+        _nextChapterError.value = null
+        _previousChapterError.value = null
+        _isTransitioning.value = false
+        _isLoading.value = true
         viewModelScope.launch {
-            _isLoading.value = true
             try {
-                var loadedTitles = NovelReaderTitles()
-                val loaded = resolveContent(chapterId) { loadedTitles = it }
-                if (loaded == null || loaded.blocks.isEmpty()) {
-                    logcat(LogPriority.WARN) {
-                        val blocks = loaded?.blocks?.size
-                        if (blocks == null) {
-                            "No novel content available for chapter $chapterId"
-                        } else {
-                            "Novel chapter $chapterId resolved to an empty chapter ($blocks blocks)"
-                        }
-                    }
-                    // Published as a failure rather than left as a null content, which is the same value a load
-                    // still in flight publishes — the reader would spin over a chapter it can never show. The return
-                    // is what keeps a chapter nobody could read out of History; `finally` still ends the load, so
-                    // this is the error state rather than a spinner over it.
-                    //
-                    // Zero blocks lands here too, and deliberately: `ChapterBody` draws one item per block, so a
-                    // chapter with none is an empty LazyColumn — a black page that survives every later attempt
-                    // because the content cache answers with it. Neither the source nor the cache can produce one
-                    // any more, but a store written before either of them was fixed still can, and a reader stuck
-                    // on a blank page has no way back. It returns before the assignment below, so an empty chapter
-                    // is never published as something to read.
-                    _error.value = NovelChapterError(reason = null)
+                val resolved = resolveChapter(chapterId)
+                if (request != loadRequest) return@launch
+                if (resolved == null) {
+                    _error.value = NovelChapterError(null)
                     return@launch
                 }
-
-                blockCount = loaded.blocks.size
-                chapterReadStartTime = Clock.System.now()
-                historyWrittenFor = null
-
-                _position.value = getReadingProgress.await(chapterId).toReadingPosition()
-                logcat(LogPriority.INFO) {
-                    "[novel-progress] LOAD chapter=$chapterId blocks=${loaded.blocks.size} " +
-                        "restored=$_position.value"
-                }
-                _titles.value = loadedTitles
-                _content.value = loaded
-
-                // Mihon writes history when the chapter opens, not when it is finished: `loadNewChapter` there calls
-                // `updateHistory()` before it even starts the chapter, so a chapter the reader opened and backed out
-                // of is still "recently read". Writing only at the end left anything short of the last paragraph
-                // invisible on the History screen, which is what an opened-and-partly-read chapter is.
-                recordHistory(chapterId)
+                publish(resolved, request)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to load novel chapter $chapterId" }
-                blockCount = 0
-                _position.value = ReadingPosition.START
-                _content.value = null
-                _titles.value = NovelReaderTitles()
-                // The one failure that arrives with something to say, which is the same message the manga reader
-                // puts under its own retry button.
-                _error.value = NovelChapterError(reason = e.message)
+                if (request == loadRequest) {
+                    session = null
+                    _position.value = ReadingPosition.START
+                    _content.value = null
+                    _titles.value = NovelReaderTitles()
+                    _activeChapterId.value = null
+                    _navigation.value = null
+                    _error.value = NovelChapterError(e.message)
+                }
             } finally {
-                _isLoading.value = false
+                if (request == loadRequest) _isLoading.value = false
             }
         }
+    }
+
+    /** All suspending reads finish in local state, before any published chapter field changes. */
+    private suspend fun resolveChapter(chapterId: Long, startAtTop: Boolean = false): ResolvedChapter? {
+        var metadata: Pair<Chapter, Manga>? = null
+        val loaded = resolveContent(chapterId) { chapter, manga -> metadata = chapter to manga }
+        if (loaded == null || loaded.blocks.isEmpty()) return null
+        val restored = if (startAtTop) ReadingPosition.START else getReadingProgress.await(chapterId).toReadingPosition()
+        val titles = metadata?.let { (chapter, manga) -> NovelReaderTitles(manga.title, chapter.name) }
+            ?: NovelReaderTitles()
+        val navigation = navigationServices?.let { services ->
+            val (chapter, manga) = checkNotNull(metadata) { "Novel navigation requires chapter and work metadata" }
+            val chapters = services.chapters.await(manga.id, applyScanlatorFilter = true)
+            // The policy owns anchor restoration; membership here describes only possible destinations.
+            val downloaded = if (manga.source == LocalSource.ID) {
+                chapters.map { it.id }.toSet()
+            } else {
+                services.downloads.getDownloadedChapterIds(chapters, manga)
+            }
+            resolveNovelChapterNavigation(
+                manga, chapters, chapter,
+                NovelNavigationPreferences(
+                    skipRead = services.reader.skipRead.get(),
+                    skipFiltered = services.reader.skipFiltered.get(),
+                    skipDuplicates = services.reader.skipDupe.get(),
+                    downloadedOnly = services.base.downloadedOnly.get(),
+                ),
+                downloaded,
+            )
+        }
+        return ResolvedChapter(chapterId, loaded, titles, restored, navigation)
+    }
+
+    /** Content is the commit signal: its observers already see NEXT's position, ID, metadata and navigation. */
+    private suspend fun publish(resolved: ResolvedChapter, request: Long) {
+        val opened = ChapterSession(resolved.id, resolved.content.blocks.size)
+        // Same lifecycle: opening writes History, never the read flag or tracker. Finish even this write before
+        // committing NEXT, so a storage exception leaves every published OLD field and its lifecycle intact.
+        recordHistory(opened)
+        if (request != loadRequest) return
+        session = opened
+        _position.value = resolved.position
+        _titles.value = resolved.titles
+        _navigation.value = resolved.navigation
+        _activeChapterId.value = resolved.id
+        _content.value = resolved.content
     }
 
     /**
@@ -235,8 +414,8 @@ class NovelReaderViewModel(
      */
     private suspend fun resolveContent(
         chapterId: Long,
-        onTitles: (NovelReaderTitles) -> Unit,
-    ): ChapterContent? = downloadedContent(chapterId, onTitles) ?: getChapterContent.await(chapterId)
+        onMetadata: (Chapter, Manga) -> Unit,
+    ): ChapterContent? = downloadedContent(chapterId, onMetadata) ?: getChapterContent.await(chapterId)
 
     /**
      * The chapter's text out of its downloaded file, or null when there is none to read.
@@ -245,10 +424,10 @@ class NovelReaderViewModel(
      * chapter whose file vanished is a chapter that has to be answered by the cache or the source — so this only
      * ever *adds* an answer, and never turns one into a failure.
      */
-    private suspend fun downloadedContent(chapterId: Long, onTitles: (NovelReaderTitles) -> Unit): ChapterContent? {
+    private suspend fun downloadedContent(chapterId: Long, onMetadata: (Chapter, Manga) -> Unit): ChapterContent? {
         val chapter = getChapter.await(chapterId) ?: return null
         val manga = getManga.await(chapter.mangaId) ?: return null
-        onTitles(NovelReaderTitles(work = manga.title, chapter = chapter.name))
+        onMetadata(chapter, manga)
         val source = sourceManager.get(manga.source) ?: return null
         return downloadProvider.findDownloadedNovelContent(chapter, manga, source)
     }
@@ -264,20 +443,35 @@ class NovelReaderViewModel(
      * Compose layer ever knows a block's measured height.
      */
     fun saveProgress(chapterId: Long, position: ReadingPosition) {
-        viewModelScope.launch {
-            val safe = position.normalized()
-            logcat(LogPriority.INFO) { "[novel-progress] SAVE chapter=$chapterId $safe" }
-            saveReadingProgress.await(
-                chapterId,
-                ReadingProgress(
-                    blockIndex = safe.blockIndex,
-                    blockOffsetPx = 0,
-                    blockFraction = safe.blockFraction,
-                    percent = percentOf(safe),
-                ),
-            )
+        if (!acceptsCallback(chapterId) || _isTransitioning.value) return
+        val safe = position.normalized()
+        val blocks = session?.blocks ?: 0
+        _position.value = safe
+        // Start in callback order and outlive Activity/ViewModel disposal. The final non-debounced
+        // sample must not be cancelled by onCleared, nor overtaken by a later storage write.
+        appScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            persistProgress(chapterId, safe, blocks)
         }
     }
+
+    private suspend fun persistProgress(chapterId: Long, position: ReadingPosition, blocks: Int) = progressWrites.withLock {
+        val safe = position.normalized()
+        logcat(LogPriority.INFO) { "[novel-progress] SAVE chapter=$chapterId $safe" }
+        saveReadingProgress.await(
+            chapterId,
+            ReadingProgress(
+                blockIndex = safe.blockIndex,
+                blockOffsetPx = 0,
+                blockFraction = safe.blockFraction,
+                percent = percentOf(safe, blocks),
+            ),
+        )
+    }
+
+    // Only the explicit legacy capability retains standalone save/complete before its first publication.
+    // Navigation callbacks belong to published content, never an unresolved destination or the original route.
+    private fun acceptsCallback(chapterId: Long): Boolean =
+        _activeChapterId.value?.let { it == chapterId } ?: !navigationAvailable
 
     /**
      * Marks the chapter read. Separate from [saveProgress] on purpose.
@@ -292,12 +486,17 @@ class NovelReaderViewModel(
      * on AniList or MyAnimeList instead of leaving it behind.
      */
     fun markRead(chapterId: Long) {
+        if (!acceptsCallback(chapterId)) return
         viewModelScope.launch {
+            if (!acceptsCallback(chapterId)) return@launch
+            val completing = session ?: ChapterSession(chapterId, 0).also { session = it }
+            if (completing.id != chapterId || completing.completionClaimed) return@launch
+            // Claim before the first suspension. A delayed OLD update retains only OLD's lifecycle object.
+            completing.completionClaimed = true
             updateChapter.await(ChapterUpdate(chapterId) { read = true })
-            recordHistory(chapterId)
+            recordHistory(completing)
 
-            // Outlives the reader on purpose, and off the main thread: reading the last page and leaving
-            // right away is the common case. Same as the manga reader.
+            // Outlives the reader, using the existing tracker preference/incognito/number guards.
             appScope.launch { updateTrackChapterRead(chapterId) }
         }
     }
@@ -307,8 +506,8 @@ class NovelReaderViewModel(
      *
      * The guards are the manga reader's, in its order: the auto-update preference can turn this off; a chapter whose
      * number the source did not recognize has no number to report; and an incognito source was never meant to be
-     * reported. Telling a tracker twice is not decided here — [TrackChapter] skips a chapter number the tracker
-     * already has, so a chapter finished again goes through the same call and is skipped there. A tracker failure is
+     * reported. The per-open completion claim prevents duplicate calls here; [TrackChapter] additionally skips a
+     * chapter number the tracker already has when a chapter is finished in another session. A tracker failure is
      * logged and swallowed: it must never keep the chapter from being marked read.
      */
     private suspend fun updateTrackChapterRead(chapterId: Long) {
@@ -326,22 +525,22 @@ class NovelReaderViewModel(
     }
 
     /**
-     * Writes the History row for [chapterId], at most once per load.
+     * Writes the History row for [opened], at most once per load.
      *
      * Separate from [markRead] because the flag and the history row have different triggers: the flag belongs to
      * reaching the end, while the row belongs to the chapter having been opened. Folding the two together would make
      * the read flag depend on history timing, and [markRead] would then have to return early on the write guard and
      * skip the flag with it.
      */
-    private suspend fun recordHistory(chapterId: Long) {
-        if (historyWrittenFor == chapterId) return
+    private suspend fun recordHistory(opened: ChapterSession) {
+        if (opened.historyWritten) return
 
         val endTime = Clock.System.now()
-        val sessionReadDuration = chapterReadStartTime?.let { (endTime - it).inWholeMilliseconds } ?: 0
-        chapterReadStartTime = null
-        historyWrittenFor = chapterId
+        val sessionReadDuration = opened.readStart?.let { (endTime - it).inWholeMilliseconds } ?: 0
+        opened.readStart = null
+        opened.historyWritten = true
 
-        upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
+        upsertHistory.await(HistoryUpdate(opened.id, endTime, sessionReadDuration))
     }
 
     /**
@@ -350,9 +549,9 @@ class NovelReaderViewModel(
      * The block fraction counts too, so the end position the reader reports — the last block at full scroll —
      * lands on exactly 1. A percentage derived from the block index alone could never reach 100%.
      */
-    private fun percentOf(position: ReadingPosition): Float {
-        if (blockCount <= 0) return 0f
-        return ((position.blockIndex + position.blockFraction) / blockCount).coerceIn(0f, 1f)
+    private fun percentOf(position: ReadingPosition, blocks: Int): Float {
+        if (blocks <= 0) return 0f
+        return ((position.blockIndex + position.blockFraction) / blocks).coerceIn(0f, 1f)
     }
 
     /** A chapter with no saved progress starts at the beginning rather than at an arbitrary offset. */

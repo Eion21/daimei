@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
@@ -22,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -123,6 +123,19 @@ internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean):
     else -> ReaderSurfaceState.Loading
 }
 
+/** Localized presentation only; navigation policy and chapter identities belong to the host. */
+data class ReaderChapterFooter(
+    val endLabel: String,
+    val message: String? = null,
+    val nextLabel: String? = null,
+    val errorMessage: String? = null,
+    val errorReason: String? = null,
+    val returnLabel: String = "",
+    val isPending: Boolean = false,
+    val previousLabel: String? = null,
+    val errorOnPrevious: Boolean = false,
+)
+
 /**
  * The reader surface for a single chapter.
  *
@@ -146,6 +159,9 @@ internal fun readerSurfaceStateFor(content: ChapterContent?, hasError: Boolean):
  * @param retryLabel the action's label.
  * @param onRetry asked for when the reader taps retry. Expected to load the same chapter again, which is what
  *   turns a reader who was offline back into one who is reading.
+ * @param chapterFooter optional scrolling end matter, excluded from selection and content progress.
+ * @param onNextChapter explicit next/retry action with a synchronous, un-debounced content position sample.
+ * @param onReturnToChapter dismisses a next-chapter error without reloading the current document.
  * @param onProgress called with the logical position as the reader moves. When the reader reaches the bottom of
  *   the final block the reported position is the end of the content, which is how the caller learns the chapter
  *   was finished.
@@ -173,6 +189,10 @@ fun NovelReaderScreen(
     // Optional layout observation for instrumentation; normal callers install no listeners.
     onDiagnosticListState: ((LazyListState) -> Unit)? = null,
     onDiagnosticParagraphPositioned: ((Int, ContentBlock.Paragraph, LayoutCoordinates) -> Unit)? = null,
+    chapterFooter: ReaderChapterFooter? = null,
+    onNextChapter: (ReadingPosition) -> Unit = {},
+    onReturnToChapter: () -> Unit = {},
+    onPreviousChapter: (ReadingPosition) -> Unit = {},
 ) {
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -208,6 +228,19 @@ fun NovelReaderScreen(
         positionRestored = true
     }
 
+    DisposableEffect(listState, readable) {
+        onDispose {
+            // Rotation/back can destroy the surface before the 200 ms debounce settles. Sample the
+            // real list synchronously; the host stamps this callback with the OLD publication ID.
+            if (positionRestored && readable != null) {
+                val sample = listState.progressSample(readable.blocks.lastIndex)
+                latestOnProgress(
+                    if (sample.atEnd) ReadingPosition(readable.blocks.lastIndex, 1f) else sample.position,
+                )
+            }
+        }
+    }
+
     // A font size or theme change reflows every block, so the pixel offset the list is holding now refers to
     // different text. Re-applying the logical position is what keeps the reader on the same paragraph.
     var settingsChangeCount by remember { mutableIntStateOf(0) }
@@ -226,9 +259,13 @@ fun NovelReaderScreen(
 
         snapshotFlow { listState.progressSample(lastIndex) }
             .distinctUntilChanged()
+            .map { sample ->
+                // Reflow uses the live logical position, not the last settled persistence callback.
+                currentPosition = sample.position
+                sample
+            }
             .debounce(PROGRESS_DEBOUNCE_MS)
             .collect { sample ->
-                currentPosition = sample.position
                 latestOnProgress(if (sample.atEnd) endOfContent else sample.position)
             }
     }
@@ -248,6 +285,34 @@ fun NovelReaderScreen(
                 modifier = Modifier.fillMaxSize(),
                 onReaderTap = { y, height ->
                     if (isReaderControlsTap(y, height)) controlsVisible = !controlsVisible
+                },
+                footer = chapterFooter?.let { footer ->
+                    @Composable {
+                        ChapterFooter(
+                            footer = footer,
+                            retryLabel = retryLabel,
+                            theme = effectiveSettings.theme,
+                            positionRestored = positionRestored,
+                            onNext = {
+                                if (positionRestored && !footer.isPending) {
+                                    // Sample in the click itself: a fling may not have reached the debounced
+                                    // progress callback. The footer's height/offset never becomes a position.
+                                    val lastIndex = surface.content.blocks.lastIndex
+                                    val sample = listState.progressSample(lastIndex)
+                                    onNextChapter(
+                                        if (sample.atEnd) ReadingPosition(lastIndex, 1f) else sample.position,
+                                    )
+                                }
+                            },
+                            onPrevious = {
+                                if (positionRestored && !footer.isPending) {
+                                    val sample = listState.progressSample(surface.content.blocks.lastIndex)
+                                    onPreviousChapter(if (sample.atEnd) ReadingPosition(surface.content.blocks.lastIndex, 1f) else sample.position)
+                                }
+                            },
+                            onReturn = onReturnToChapter,
+                        )
+                    }
                 },
             )
             // Overlay instead of resizing the list: opening controls must not change the reading position.
@@ -328,8 +393,11 @@ private suspend fun LazyListState.awaitItemHeight(index: Int): Int = withTimeout
         .first()
 } ?: 0
 
+/** Measured list geometry, kept independent of Compose for the production progress calculation. */
+internal data class ReaderVisibleItem(val index: Int, val offset: Int, val size: Int)
+
 /** A reading position sampled from the current scroll state. */
-private data class ProgressSample(
+internal data class ProgressSample(
     val position: ReadingPosition,
     val atEnd: Boolean,
 )
@@ -342,21 +410,100 @@ private data class ProgressSample(
  * visible. Treating "the final block is on screen" as "the chapter is finished" would mark a chapter read the
  * moment the reader scrolled to the top of a long closing paragraph.
  */
-private fun LazyListState.progressSample(lastIndex: Int): ProgressSample {
-    val visible = layoutInfo.visibleItemsInfo
-    val index = firstVisibleItemIndex
+private fun LazyListState.progressSample(lastIndex: Int): ProgressSample = sampleReaderProgress(
+    firstVisibleItemIndex = firstVisibleItemIndex,
+    firstVisibleItemScrollOffset = firstVisibleItemScrollOffset,
+    visible = layoutInfo.visibleItemsInfo.map { ReaderVisibleItem(it.index, it.offset, it.size) },
+    viewportEndOffset = layoutInfo.viewportEndOffset,
+    lastIndex = lastIndex,
+)
+
+/** Content-only sampling: a footer may be visible, but is never a block or a completion oracle. */
+internal fun sampleReaderProgress(
+    firstVisibleItemIndex: Int,
+    firstVisibleItemScrollOffset: Int,
+    visible: List<ReaderVisibleItem>,
+    viewportEndOffset: Int,
+    lastIndex: Int,
+): ProgressSample {
+    if (lastIndex < 0) return ProgressSample(ReadingPosition.START, atEnd = false)
+    // When only end matter remains, every real block has already passed the viewport.
+    // Do not measure the footer or convert its fractional scroll offset into content progress.
+    if (firstVisibleItemIndex > lastIndex) return ProgressSample(ReadingPosition(lastIndex, 1f), atEnd = true)
+    val index = firstVisibleItemIndex.coerceIn(0, lastIndex)
     val measuredHeight = visible.firstOrNull { it.index == index }?.size ?: 0
     val position = BlockLayout.toReadingPosition(index, firstVisibleItemScrollOffset, measuredHeight)
-    val lastItem = visible.lastOrNull()
-    val atEnd = lastItem != null &&
-        lastItem.index == lastIndex &&
-        lastItem.hasReachedEndOf(layoutInfo.viewportEndOffset)
+    val lastContent = visible.firstOrNull { it.index == lastIndex }
+    val atEnd = lastContent != null && lastContent.hasReachedEndOf(viewportEndOffset)
     return ProgressSample(position = position, atEnd = atEnd)
 }
 
-/** True when this item's trailing edge has reached (or passed) the bottom of the viewport. */
-private fun LazyListItemInfo.hasReachedEndOf(viewportEndOffset: Int): Boolean =
-    offset + size >= viewportEndOffset - END_OF_CONTENT_TOLERANCE_PX
+/** The real trailing edge must be inside the viewport (allowing the existing eight-pixel tolerance). */
+private fun ReaderVisibleItem.hasReachedEndOf(viewportEndOffset: Int): Boolean =
+    offset.toLong() + size <= viewportEndOffset.toLong() + END_OF_CONTENT_TOLERANCE_PX
+
+/** Drawn as the last LazyColumn item, never as a bottom bar or a second selection owner. */
+@Composable
+private fun ChapterFooter(
+    footer: ReaderChapterFooter,
+    retryLabel: String,
+    theme: ReaderTheme,
+    positionRestored: Boolean,
+    onNext: () -> Unit,
+    onReturn: () -> Unit,
+    onPrevious: () -> Unit,
+) {
+    val colors = ReaderColorScheme.colorsFor(theme)
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(ERROR_HORIZONTAL_PADDING),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(footer.endLabel, color = colors.text, textAlign = TextAlign.Center)
+        val message = footer.errorMessage ?: footer.message
+        if (message != null) {
+            Text(
+                message,
+                modifier = Modifier.padding(top = ERROR_SPACING),
+                color = colors.text,
+                textAlign = TextAlign.Center,
+            )
+        }
+        if (footer.errorMessage != null && footer.errorReason != null) {
+            Text(
+                footer.errorReason,
+                modifier = Modifier.padding(top = ERROR_SPACING),
+                color = colors.text.copy(alpha = ERROR_REASON_ALPHA),
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+            )
+        }
+        if (footer.previousLabel != null) {
+            Button(
+                onClick = onPrevious,
+                enabled = positionRestored && !footer.isPending,
+                modifier = Modifier.padding(top = ERROR_SPACING),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.text, contentColor = colors.background),
+            ) {
+                Text(if (footer.errorOnPrevious) retryLabel else footer.previousLabel)
+            }
+        }
+        if (footer.nextLabel != null) {
+            Button(
+                onClick = onNext,
+                enabled = positionRestored && !footer.isPending,
+                modifier = Modifier.padding(top = ERROR_SPACING),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.text, contentColor = colors.background),
+            ) {
+                Text(if (footer.errorMessage != null && !footer.errorOnPrevious) retryLabel else footer.nextLabel)
+            }
+        }
+        if (footer.errorMessage != null) {
+            TextButton(onClick = onReturn, enabled = !footer.isPending) {
+                Text(footer.returnLabel, color = colors.text)
+            }
+        }
+    }
+}
 
 @Composable
 private fun LoadingPlaceholder(theme: ReaderTheme, modifier: Modifier = Modifier) {

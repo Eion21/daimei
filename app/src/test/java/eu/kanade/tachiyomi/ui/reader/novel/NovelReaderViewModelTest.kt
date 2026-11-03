@@ -4,13 +4,18 @@ import app.novel.reader.core.ReadingPosition
 import app.novel.runtime.SourceRegistry
 import app.novel.source.api.ChapterContent
 import app.novel.source.api.ContentBlock
+import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,9 +23,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,6 +38,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.interactor.GetChapter
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterRemoteUpdate
@@ -58,6 +66,7 @@ import tachiyomi.domain.novel.repository.ReadingProgress
 import tachiyomi.domain.novel.repository.ReadingProgressRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
+import tachiyomi.source.local.LocalSource
 import kotlin.time.Clock
 
 /**
@@ -240,6 +249,10 @@ class NovelReaderViewModelTest {
         trackPreferences: TrackPreferences = TrackPreferences(InMemoryPreferenceStore()),
         incognito: GetIncognitoState = mockk<GetIncognitoState> { coEvery { await(anyNullable()) } returns false },
         appScope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
+        getChaptersByMangaId: GetChaptersByMangaId? = null,
+        readerPreferences: ReaderPreferences? = null,
+        basePreferences: BasePreferences? = null,
+        downloadManager: DownloadManager? = null,
     ): NovelReaderViewModel {
         return NovelReaderViewModel(
             getChapterContent = GetChapterContent(content, chapters, FakeMangaRepository(), SourceRegistry()),
@@ -265,6 +278,10 @@ class NovelReaderViewModelTest {
             getIncognitoState = incognito,
             context = mockk(relaxed = true),
             appScope = appScope,
+            getChaptersByMangaId = getChaptersByMangaId,
+            readerPreferences = readerPreferences,
+            basePreferences = basePreferences,
+            downloadManager = downloadManager,
         )
     }
 
@@ -899,8 +916,695 @@ class NovelReaderViewModelTest {
         }
     }
 
+    /** Separate per-id stores: saving OLD must never mutate the saved row for NEXT. No real IO or trackers. */
+    private inner class TransitionFixture(
+        val rows: List<Chapter> = transitionRows(),
+        val work: Manga = manga().copy(title = "Transition Work"),
+        downloadedIds: Set<Long> = emptySet(),
+    ) {
+        val chapters = mockk<ChapterRepository>(relaxed = true)
+        val mangas = mockk<MangaRepository>()
+        val progress = mockk<ReadingProgressRepository>()
+        val contentStore = mockk<ChapterContentRepository>()
+        val history = mockk<HistoryRepository>()
+        val tracker = mockk<TrackChapter>()
+        val downloads = mockk<DownloadManager>(relaxed = true)
+        val readerPrefs = ReaderPreferences(InMemoryPreferenceStore())
+        // Stub only the dependency's preference handle, avoiding Android installer/GLES initialization.
+        // This is an isolated in-memory fixture key, never an installed app preference.
+        val basePrefs = mockk<BasePreferences> {
+            every { downloadedOnly } returns InMemoryPreferenceStore().getBoolean("c5_fixture_downloaded_only", false)
+        }
+        val oldPosition = ReadingPosition(1, 0.75f)
+        val nextSaved = ReadingProgress(2, 0, 0.625f, 0.65625f)
+        val nextPosition = ReadingPosition(2, 0.625f)
+        val nextContent = ChapterContent(List(4) { ContentBlock.Paragraph("Next paragraph $it") })
+        val thirdContent = ChapterContent(listOf(ContentBlock.Paragraph("Third chapter")))
+        val saves = mutableListOf<Pair<Long, ReadingProgress>>()
+        val updates = mutableListOf<ChapterUpdate>()
+        val histories = mutableListOf<HistoryUpdate>()
+        val tracks = mutableListOf<Pair<Long, Double>>()
+        val events = mutableListOf<String>()
+        var nextLoader: suspend () -> ChapterContent? = { nextContent }
+        var beforeUpdate: suspend (ChapterUpdate) -> Unit = {}
+
+        init {
+            coEvery { chapters.getChapterById(any()) } answers {
+                rows.find { it.id == firstArg<Long>() }
+            }
+            coEvery { chapters.getChapterByMangaId(MANGA_ID, true) } returns rows
+            coEvery { chapters.update(any()) } coAnswers {
+                val update = firstArg<ChapterUpdate>()
+                beforeUpdate(update)
+                updates += update
+            }
+            coEvery { mangas.getMangaById(MANGA_ID) } returns work
+            coEvery { progress.get(any()) } answers {
+                events += "restore:${firstArg<Long>()}"
+                when (firstArg<Long>()) {
+                    CHAPTER_ID -> saved
+                    NEXT_ID -> nextSaved
+                    else -> null
+                }
+            }
+            coEvery { progress.save(any(), any()) } answers {
+                saves += firstArg<Long>() to secondArg<ReadingProgress>()
+                events += "save:${firstArg<Long>()}"
+            }
+            coEvery { contentStore.get(any()) } coAnswers {
+                val id = firstArg<Long>()
+                events += "load:$id"
+                when (id) {
+                    CHAPTER_ID -> content
+                    NEXT_ID -> nextLoader()
+                    else -> thirdContent
+                }
+            }
+            coEvery { history.upsertHistory(any()) } answers { histories += firstArg<HistoryUpdate>() }
+            coEvery { tracker.await(any(), any(), any(), any()) } answers {
+                tracks += secondArg<Long>() to thirdArg<Double>()
+            }
+            every { downloads.getDownloadedChapterIds(any(), any()) } returns downloadedIds
+            every { downloads.isChapterDownloaded(any(), any(), any(), any(), any()) } answers {
+                rows.any { it.name == firstArg<String>() && it.id in downloadedIds }
+            }
+        }
+
+        fun vm() = viewModel(
+            content = contentStore,
+            progress = progress,
+            chapters = chapters,
+            mangas = mangas,
+            history = history,
+            trackChapter = tracker,
+            trackPreferences = TrackPreferences(InMemoryPreferenceStore()).apply { autoUpdateTrack.set(true) },
+            sourceManager = mockk<SourceManager>().also { manager -> coEvery { manager.get(any()) } returns null },
+            getChaptersByMangaId = GetChaptersByMangaId(chapters),
+            readerPreferences = readerPrefs,
+            basePreferences = basePrefs,
+            downloadManager = downloads,
+        )
+
+        fun assertNoCompletion() {
+            assertTrue(updates.isEmpty(), "opening or failing NEXT marked a chapter read")
+            assertTrue(tracks.isEmpty(), "opening or failing NEXT called a tracker")
+        }
+    }
+
+    private fun transitionRows() = listOf(
+        chapter(THIRD_ID, chapterNumber = 7.0).copy(name = "Chapter 7", sourceOrder = 1),
+        chapter(NEXT_ID, chapterNumber = 6.0).copy(name = "Chapter 6", sourceOrder = 2),
+        chapter(CHAPTER_ID).copy(name = "Chapter 5", sourceOrder = 3),
+    )
+
+    private fun transitionTest(body: suspend TestScope.() -> Unit) = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            body()
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    private fun assertOldPublished(vm: NovelReaderViewModel) {
+        assertEquals(content, vm.content.value)
+        assertEquals(savedPosition, vm.position.value)
+        assertEquals(NovelReaderTitles("Transition Work", "Chapter 5"), vm.titles.value)
+        assertEquals(CHAPTER_ID, vm.activeChapterId.value)
+    }
+
+    @Test
+    fun s31RecreatedHostDoesNotReloadRouteOrResetNavigatedChapter() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.attach(CHAPTER_ID)
+        vm.attach(CHAPTER_ID)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { f.contentStore.get(CHAPTER_ID) }
+        vm.saveProgress(CHAPTER_ID, f.oldPosition)
+        advanceUntilIdle()
+        vm.attach(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(f.oldPosition, vm.position.value)
+        coVerify(exactly = 1) { f.contentStore.get(CHAPTER_ID) }
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        vm.attach(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(f.nextContent, vm.content.value)
+        coVerify(exactly = 1) { f.contentStore.get(NEXT_ID) }
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID), f.histories.map { it.chapterId })
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun s31ProgressWritesStayOrderedWhenStorageSuspends() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        val resume = CompletableDeferred<Unit>()
+        val stored = mutableListOf<ReadingProgress>()
+        coEvery { f.progress.save(any(), any()) } coAnswers {
+            val progress = secondArg<ReadingProgress>()
+            if (progress.blockFraction == 0.25f) resume.await()
+            stored += progress
+        }
+        vm.saveProgress(CHAPTER_ID, ReadingPosition(1, 0.25f))
+        runCurrent()
+        vm.saveProgress(CHAPTER_ID, ReadingPosition(1, 0.75f))
+        runCurrent()
+        resume.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(0.25f, 0.75f), stored.map { it.blockFraction })
+        assertEquals(ReadingPosition(1, 0.75f), vm.position.value)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun s31FinalProgressSurvivesViewModelClear() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        val resume = CompletableDeferred<Unit>()
+        val persisted = mutableListOf<ReadingProgress>()
+        coEvery { f.progress.save(any(), any()) } coAnswers {
+            resume.await()
+            persisted += secondArg<ReadingProgress>()
+        }
+        vm.saveProgress(CHAPTER_ID, f.oldPosition)
+        runCurrent()
+        androidx.lifecycle.ViewModelStore().apply { put("s31", vm); clear() }
+        resume.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(0.75f), persisted.map { it.blockFraction })
+    }
+
+    @Test
+    fun s31PreviousPolicyUsesSameOrderAndDownloadedFilterAsNext() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(NEXT_ID)
+        advanceUntilIdle()
+        assertEquals(CHAPTER_ID, vm.navigation.value?.previous?.id)
+        assertEquals(THIRD_ID, vm.navigation.value?.next?.id)
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertNull(vm.navigation.value?.previous)
+        f.basePrefs.downloadedOnly.set(true)
+        vm.load(THIRD_ID)
+        advanceUntilIdle()
+        assertNull(vm.navigation.value?.previous)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun s31PreviousNextRoundTripRestoresEachChaptersOwnPosition() = transitionTest {
+        val f = TransitionFixture()
+        val positions = mutableMapOf(CHAPTER_ID to saved, NEXT_ID to f.nextSaved)
+        coEvery { f.progress.get(any()) } answers { positions[firstArg<Long>()] }
+        coEvery { f.progress.save(any(), any()) } answers {
+            positions[firstArg<Long>()] = secondArg<ReadingProgress>()
+            f.saves += firstArg<Long>() to secondArg<ReadingProgress>()
+        }
+        val vm = f.vm()
+        vm.attach(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(f.nextPosition, vm.position.value)
+        val nextStop = ReadingPosition(3, 0.375f)
+        vm.openPreviousChapter(nextStop)
+        advanceUntilIdle()
+        assertEquals(CHAPTER_ID, vm.activeChapterId.value)
+        assertEquals(f.oldPosition, vm.position.value)
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(nextStop, vm.position.value)
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID, CHAPTER_ID), f.saves.map { it.first })
+        assertEquals(0.375f, positions[NEXT_ID]?.blockFraction)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun s31RapidNewRouteWinsOverAnOlderSuspendedAdjacentLoad() = transitionTest {
+        val f = TransitionFixture()
+        val gate = CompletableDeferred<Unit>()
+        f.nextLoader = { gate.await(); f.nextContent }
+        val vm = f.vm()
+        vm.attach(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        runCurrent()
+        vm.attach(THIRD_ID)
+        runCurrent()
+        assertEquals(THIRD_ID, vm.activeChapterId.value)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(THIRD_ID, vm.activeChapterId.value)
+        assertEquals(f.thirdContent, vm.content.value)
+        assertEquals(ReadingPosition.START, vm.position.value)
+        assertEquals(listOf(CHAPTER_ID, THIRD_ID), f.histories.map { it.chapterId })
+        assertFalse(vm.isTransitioning.value)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun s31FailedPreviousKeepsCurrentChapterAndRetriesTheSameDirection() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.attach(NEXT_ID)
+        advanceUntilIdle()
+        coEvery { f.contentStore.get(CHAPTER_ID) } throws IllegalStateException(STORE_FAILURE)
+        vm.openPreviousChapter(f.nextPosition)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(NovelChapterError(STORE_FAILURE), vm.previousChapterError.value)
+        assertNull(vm.nextChapterError.value)
+        assertEquals(listOf(NEXT_ID), f.histories.map { it.chapterId })
+        coEvery { f.contentStore.get(CHAPTER_ID) } returns content
+        vm.openPreviousChapter(f.nextPosition)
+        advanceUntilIdle()
+        assertEquals(CHAPTER_ID, vm.activeChapterId.value)
+        assertNull(vm.previousChapterError.value)
+        assertEquals(savedPosition, vm.position.value)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5InitialSourceAscendingPublishesIdentityAndNext() = transitionTest {
+        val f = TransitionFixture(work = manga().copy(
+            title = "Transition Work", chapterFlags = Manga.CHAPTER_SORTING_SOURCE or Manga.CHAPTER_SORT_ASC,
+        ))
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertOldPublished(vm)
+        assertEquals(NEXT_ID, vm.navigation.value?.next?.id)
+        assertEquals(NovelNavigationStatus.NEXT, vm.navigation.value?.status)
+        assertFalse(vm.navigation.value?.downloadedOnly ?: true)
+        assertFalse(f.readerPrefs.skipDupe.get())
+        assertTrue(f.saves.isEmpty())
+        f.assertNoCompletion()
+        coVerify(exactly = 1) { f.chapters.getChapterById(any()) }
+        coVerify(exactly = 1) { f.mangas.getMangaById(any()) }
+        coVerify(exactly = 1) { f.chapters.getChapterByMangaId(MANGA_ID, true) }
+        coVerify(exactly = 1) { f.chapters.getChapterByMangaId(any(), any()) }
+    }
+
+    @Test
+    fun c5InitialSourceDescendingStillAdvancesInReadingOrder() = transitionTest {
+        val f = TransitionFixture(work = manga().copy(
+            chapterFlags = Manga.CHAPTER_SORTING_SOURCE or Manga.CHAPTER_SORT_DESC,
+        ))
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, vm.navigation.value?.next?.id)
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID, THIRD_ID), vm.navigation.value?.chapters?.map { it.id })
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5LastChapterPublishesNoMoreStatus() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(THIRD_ID)
+        advanceUntilIdle()
+        assertEquals(NovelNavigationStatus.LAST_CHAPTER, vm.navigation.value?.status)
+        assertNull(vm.navigation.value?.next)
+        assertEquals(THIRD_ID, vm.activeChapterId.value)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5NumericUnknownPublishesAmbiguityStatus() = transitionTest {
+        val rows = transitionRows().map { if (it.id == NEXT_ID) it.copy(chapterNumber = -1.0) else it }
+        val f = TransitionFixture(rows, manga().copy(chapterFlags = Manga.CHAPTER_SORTING_NUMBER))
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(NovelNavigationStatus.UNKNOWN_NUMBER, vm.navigation.value?.status)
+        assertNull(vm.navigation.value?.next)
+        assertEquals(CHAPTER_ID, vm.activeChapterId.value)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5DownloadedOnlyPublishesDestinationAndNoMoreStatus() = transitionTest {
+        val f = TransitionFixture(downloadedIds = setOf(THIRD_ID))
+        f.basePrefs.downloadedOnly.set(true)
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(THIRD_ID, vm.navigation.value?.next?.id)
+        assertEquals(true, vm.navigation.value?.downloadedOnly)
+        assertEquals(CHAPTER_ID, vm.activeChapterId.value)
+        vm.load(THIRD_ID)
+        advanceUntilIdle()
+        assertEquals(NovelNavigationStatus.NO_MORE_DOWNLOADED, vm.navigation.value?.status)
+        assertNull(vm.navigation.value?.next)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5LocalChaptersAreOfflineDestinationsWithoutDownloadMembership() = transitionTest {
+        val f = TransitionFixture(work = manga().copy(source = LocalSource.ID))
+        f.basePrefs.downloadedOnly.set(true)
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, vm.navigation.value?.next?.id)
+        assertEquals(NovelNavigationStatus.NEXT, vm.navigation.value?.status)
+        assertEquals(true, vm.navigation.value?.downloadedOnly)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5SkipReadPreferenceActuallyFeedsThePolicy() = transitionTest {
+        val f = TransitionFixture(rows = transitionRows().map { it.copy(read = it.id == NEXT_ID) })
+        f.readerPrefs.skipRead.set(true)
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(THIRD_ID, vm.navigation.value?.next?.id)
+        assertEquals(CHAPTER_ID, vm.activeChapterId.value)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5SkipFilteredPreferenceUsesScanlatorFilteredSnapshot() = transitionTest {
+        val rows = transitionRows().map { it.copy(bookmark = it.id == THIRD_ID) }
+        val f = TransitionFixture(rows, manga().copy(chapterFlags = Manga.CHAPTER_SHOW_BOOKMARKED))
+        f.readerPrefs.skipFiltered.set(true)
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(THIRD_ID, vm.navigation.value?.next?.id)
+        assertEquals(listOf(CHAPTER_ID, THIRD_ID), vm.navigation.value?.chapters?.map { it.id })
+        coVerify(exactly = 1) { f.chapters.getChapterByMangaId(MANGA_ID, true) }
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5DuplicatePreferenceIsOffByDefaultAndOptInChangesNavigation() = transitionTest {
+        val rows = transitionRows().map { if (it.id == NEXT_ID) it.copy(chapterNumber = 5.0) else it }
+        val off = TransitionFixture(rows)
+        val defaultVm = off.vm()
+        defaultVm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, defaultVm.navigation.value?.next?.id)
+        assertFalse(off.readerPrefs.skipDupe.get())
+        val on = TransitionFixture(rows)
+        on.readerPrefs.skipDupe.set(true)
+        val optedInVm = on.vm()
+        optedInVm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(THIRD_ID, optedInVm.navigation.value?.next?.id)
+        off.assertNoCompletion()
+        on.assertNoCompletion()
+    }
+
+    @Test
+    fun c5NextSavesLatestOldPositionBeforeLoaderAndRetainsPublishedChapterWhilePaused() = transitionTest {
+        val f = TransitionFixture()
+        val entered = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        f.nextLoader = { entered.complete(Unit); resume.await(); f.nextContent }
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        f.events.clear()
+        try {
+            vm.openNextChapter(f.oldPosition)
+            runCurrent()
+            assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first }, "NEXT did not save OLD exactly once")
+            assertEquals(ReadingProgress(1, 0, 0.75f, 0.875f), f.saves.single().second)
+            assertTrue(entered.isCompleted, "NEXT never reached the controlled loader")
+            assertTrue(f.events.indexOf("save:$CHAPTER_ID") < f.events.indexOf("load:$NEXT_ID"))
+            assertOldPublished(vm)
+            assertTrue(vm.isTransitioning.value)
+            assertFalse(vm.isLoading.value, "existing reader must not be replaced by an initial spinner")
+            f.assertNoCompletion()
+        } finally {
+            resume.complete(Unit)
+        }
+        advanceUntilIdle()
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(f.nextPosition, vm.position.value)
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(NovelReaderTitles("Transition Work", "Chapter 6"), vm.titles.value)
+        assertFalse(vm.isTransitioning.value)
+        assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first }, "NEXT's saved row was overwritten")
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5UnreadNextPositionAndIdentityAreResolvedBeforeContentPublication() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        val publications = mutableListOf<Triple<ReadingPosition, Long?, NovelReaderTitles>>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            vm.content.collect {
+                if (it == f.nextContent) publications += Triple(vm.position.value, vm.activeChapterId.value, vm.titles.value)
+            }
+        }
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(listOf(Triple(f.nextPosition, NEXT_ID, NovelReaderTitles("Transition Work", "Chapter 6"))), publications)
+        assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first })
+        coVerify(exactly = 1) { f.progress.get(NEXT_ID) }
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5AlreadyReadNextStartsAtTopWithoutOverwritingSavedRow() = transitionTest {
+        val f = TransitionFixture(rows = transitionRows().map { it.copy(read = it.id == NEXT_ID) })
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(ReadingPosition.START, vm.position.value)
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first })
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5RepeatedCompletionMarksAndTracksCurrentExactlyOnce() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        repeat(3) { vm.markRead(CHAPTER_ID) }
+        advanceUntilIdle()
+        assertEquals(listOf(CHAPTER_ID), f.updates.map { it.id })
+        assertEquals(listOf(true), f.updates.map { it.read })
+        assertEquals(listOf(MANGA_ID to 5.0), f.tracks)
+        assertEquals(listOf(CHAPTER_ID), f.histories.map { it.chapterId })
+        assertTrue(f.saves.isEmpty())
+        assertEquals(savedPosition, vm.position.value)
+    }
+
+    @Test
+    fun c5CallbacksAfterTransitionUsePublishedIdAndRejectStaleRouteId() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        val savesBefore = f.saves.toList()
+        val historyBefore = f.histories.toList()
+        val otherStateBefore = listOf(
+            vm.activeChapterId.value, vm.navigation.value, vm.error.value, vm.nextChapterError.value,
+            vm.isLoading.value, vm.isTransitioning.value,
+        )
+        vm.saveProgress(CHAPTER_ID, ReadingPosition.START)
+        vm.markRead(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(savesBefore, f.saves)
+        assertEquals(historyBefore, f.histories)
+        assertEquals(
+            otherStateBefore,
+            listOf(
+                vm.activeChapterId.value, vm.navigation.value, vm.error.value, vm.nextChapterError.value,
+                vm.isLoading.value, vm.isTransitioning.value,
+            ),
+        )
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(f.nextPosition, vm.position.value)
+        assertEquals(NovelReaderTitles("Transition Work", "Chapter 6"), vm.titles.value)
+        f.assertNoCompletion()
+        vm.saveProgress(NEXT_ID, ReadingPosition(3, 0.5f))
+        repeat(2) { vm.markRead(NEXT_ID) }
+        advanceUntilIdle()
+        assertEquals(NEXT_ID, f.saves.last().first)
+        assertEquals(ReadingProgress(3, 0, 0.5f, 0.875f), f.saves.last().second)
+        assertEquals(listOf(NEXT_ID), f.updates.map { it.id })
+        assertEquals(listOf(true), f.updates.map { it.read })
+        assertEquals(listOf(MANGA_ID to 6.0), f.tracks)
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID), f.histories.map { it.chapterId })
+    }
+
+    @Test
+    fun c5DelayedCompletionCannotWriteOntoNewActiveChapter() = transitionTest {
+        val f = TransitionFixture()
+        val entered = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        f.beforeUpdate = { entered.complete(Unit); resume.await() }
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        try {
+            vm.markRead(CHAPTER_ID)
+            runCurrent()
+            assertTrue(entered.isCompleted)
+            vm.openNextChapter(f.oldPosition)
+            runCurrent()
+            assertEquals(NEXT_ID, vm.activeChapterId.value)
+            assertEquals(f.nextContent, vm.content.value)
+            assertTrue(f.updates.isEmpty())
+        } finally {
+            resume.complete(Unit)
+        }
+        advanceUntilIdle()
+        assertEquals(listOf(CHAPTER_ID), f.updates.map { it.id })
+        assertEquals(listOf(true), f.updates.map { it.read })
+        assertEquals(listOf(MANGA_ID to 5.0), f.tracks)
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(f.nextPosition, vm.position.value)
+        assertEquals(NovelReaderTitles("Transition Work", "Chapter 6"), vm.titles.value)
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID), f.histories.map { it.chapterId })
+    }
+
+    @Test
+    fun c5FailedNextRetainsContentPositionAnchorTitlesAndOffersRetryWithoutCompletion() = transitionTest {
+        val f = TransitionFixture()
+        f.nextLoader = { throw IllegalStateException(STORE_FAILURE) }
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(NovelChapterError(STORE_FAILURE), vm.nextChapterError.value)
+        assertOldPublished(vm)
+        assertNull(vm.error.value, "NEXT failure replaced the readable chapter with an initial-load error")
+        assertFalse(vm.isLoading.value)
+        assertFalse(vm.isTransitioning.value)
+        assertEquals(NEXT_ID, vm.navigation.value?.next?.id, "retry lost its destination")
+        assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first })
+        assertEquals(ReadingProgress(1, 0, 0.75f, 0.875f), f.saves.single().second)
+        assertEquals(listOf(CHAPTER_ID), f.histories.map { it.chapterId })
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5MissingOfflineNextRetainsUnreadCurrentAndNoDestinationHistory() = transitionTest {
+        val f = TransitionFixture()
+        // No downloaded file, no cached text and no registered network source: a normal recoverable miss.
+        f.nextLoader = { null }
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(NovelChapterError(null), vm.nextChapterError.value)
+        assertOldPublished(vm)
+        assertNull(vm.error.value)
+        assertFalse(vm.isTransitioning.value)
+        assertEquals(NEXT_ID, vm.navigation.value?.next?.id)
+        assertEquals(listOf(CHAPTER_ID), f.histories.map { it.chapterId })
+        assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first })
+        assertEquals(ReadingProgress(1, 0, 0.75f, 0.875f), f.saves.single().second)
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5RetryNextActuallyLoadsSameDestinationAndClearsTransitionError() = transitionTest {
+        val f = TransitionFixture()
+        f.nextLoader = { throw IllegalStateException(STORE_FAILURE) }
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertNotNull(vm.nextChapterError.value)
+        f.nextLoader = { f.nextContent }
+        vm.openNextChapter(f.oldPosition)
+        advanceUntilIdle()
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(f.nextPosition, vm.position.value)
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertNull(vm.nextChapterError.value)
+        assertNull(vm.error.value)
+        assertFalse(vm.isTransitioning.value)
+        assertTrue(f.saves.all { it.first == CHAPTER_ID })
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID), f.histories.map { it.chapterId })
+        coVerify(exactly = 2) { f.contentStore.get(NEXT_ID) }
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5ReentrantNextWhileInFlightLoadsAndSavesOnlyOnce() = transitionTest {
+        val f = TransitionFixture()
+        val entered = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        f.nextLoader = { entered.complete(Unit); resume.await(); f.nextContent }
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        try {
+            vm.openNextChapter(f.oldPosition)
+            vm.openNextChapter(ReadingPosition.START)
+            runCurrent()
+            assertTrue(entered.isCompleted)
+            vm.openNextChapter(ReadingPosition.START)
+            runCurrent()
+            assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first })
+            assertEquals(ReadingProgress(1, 0, 0.75f, 0.875f), f.saves.single().second)
+            coVerify(exactly = 1) { f.contentStore.get(NEXT_ID) }
+            assertOldPublished(vm)
+            f.assertNoCompletion()
+        } finally {
+            resume.complete(Unit)
+        }
+        advanceUntilIdle()
+        assertEquals(f.nextContent, vm.content.value)
+        assertEquals(NEXT_ID, vm.activeChapterId.value)
+        assertEquals(f.nextPosition, vm.position.value)
+        assertEquals(listOf(CHAPTER_ID, NEXT_ID), f.histories.map { it.chapterId })
+        f.assertNoCompletion()
+    }
+
+    @Test
+    fun c5OpeningWithoutCompletionStillDoesNotMarkOrTrack() = transitionTest {
+        val f = TransitionFixture()
+        val vm = f.vm()
+        vm.load(CHAPTER_ID)
+        advanceUntilIdle()
+        assertEquals(content, vm.content.value)
+        assertEquals(savedPosition, vm.position.value)
+        assertEquals(NovelReaderTitles("Transition Work", "Chapter 5"), vm.titles.value)
+        assertEquals(listOf(CHAPTER_ID), f.histories.map { it.chapterId })
+        assertTrue(f.saves.isEmpty())
+        f.assertNoCompletion()
+    }
+
     private companion object {
         const val CHAPTER_ID = 7L
+        const val NEXT_ID = 8L
+        const val THIRD_ID = 9L
         const val MANGA_ID = 42L
         const val SOURCE_ID = 99L
 

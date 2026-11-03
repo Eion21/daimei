@@ -873,8 +873,16 @@
     <string name="transition_pages_loading">Loading pages…</string>
     <string name="transition_pages_error">Failed to load pages: %1$s</string>
     <string name="novel_chapter_load_error">Couldn\'t load this chapter</string>
+    <string name="novel_chapter_end">End of %1$s</string>
+    <string name="novel_next_chapter">Next: %1$s</string>
+    <string name="novel_next_downloaded">Next downloaded: %1$s</string>
+    <string name="novel_no_more_chapters">No more chapters</string>
+    <string name="novel_no_more_downloaded">No more downloaded chapters</string>
+    <string name="novel_next_unknown">Cannot determine the next chapter</string>
+    <string name="novel_next_chapter_load_error">Couldn\'t load the next chapter</string>
+    <string name="novel_return_to_chapter">Return to current chapter</string>
     <string name="novel_reader_controls">Reader controls</string>
-    <string name="novel_reader_interactions">Tap the upper half to show or hide controls. Long press text to select, copy or share it. Drag to extend the selection across paragraphs.</string>
+    <string name="novel_reader_interactions">Tap the upper half to show or hide controls. Long press text to select, copy or share it. Drag to extend the selection across paragraphs. At the end, use the footer to open the next chapter.</string>
     <string name="novel_reader_font">Font</string>
     <string name="novel_reader_serif">Serif</string>
     <string name="novel_reader_sans_serif">Sans serif</string>
@@ -1092,4 +1100,6 @@
 
     <string name="donationCampaign.paragraph1">Daimei is a fork of Mihon, adapted for reading light novels. It maintains the same open source philosophy while focusing on text-based content.</string>
     <string name="donationCampaign.paragraph2">This app is based on Mihon, which is licensed under Apache 2.0. All credit for the original work goes to the Mihon team and contributors.</string>
+    <string name="novel_previous_chapter">Previous: %1$s</string>
+    <string name="novel_previous_chapter_load_error">Could not load the previous chapter.</string>
 </resources>

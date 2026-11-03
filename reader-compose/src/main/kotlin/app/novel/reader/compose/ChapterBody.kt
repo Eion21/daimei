@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.contextmenu.builder.item
 import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMenuComponents
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.rememberSelectionState
 import androidx.compose.material3.HorizontalDivider
@@ -64,6 +65,9 @@ private val BLOCK_SPACING = 16.dp
  *
  * Line length is capped at [ReaderSettings.maxTextWidthDp] and centred: a novel paragraph stretched across a
  * tablet is unreadable, no matter how large the window is.
+ *
+ * [footer] is optional end matter in this same list, outside native text selection. Its buttons consume their
+ * own clicks through the normal child clickable handling, so an upper-half footer action is not a reader tap.
  */
 @Composable
 fun ChapterBody(
@@ -76,6 +80,7 @@ fun ChapterBody(
     onReaderTap: (y: Float, height: Int) -> Unit = { _, _ -> },
     onShareSelectedText: (String) -> Unit = {},
     onDiagnosticParagraphPositioned: ((Int, ContentBlock.Paragraph, LayoutCoordinates) -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null,
 ) {
     // Clamping lives in reader-core, so the UI cannot render an unreadable chapter from a corrupt setting.
     val effectiveSettings = settings.normalized()
@@ -150,6 +155,12 @@ fun ChapterBody(
                             onDiagnosticParagraphPositioned = onDiagnosticParagraphPositioned,
                         )
                     }
+                }
+            }
+            if (footer != null) {
+                // String key cannot collide with the integer content keys. This item is not a content block.
+                item(key = "chapter-footer") {
+                    DisableSelection { footer() }
                 }
             }
         }

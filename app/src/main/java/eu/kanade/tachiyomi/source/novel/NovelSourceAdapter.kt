@@ -17,6 +17,8 @@ import tachiyomi.data.novel.NovelMapper
 import app.novel.source.api.Chapter as NovelChapter
 import tachiyomi.domain.source.model.Source as DomainSource
 
+internal const val UNRECOGNIZED_NUMBER = -1f
+
 /**
  * Presents a [NovelSource] through Mihon's [Source] interface, so Explore, the library and the update pipeline
  * treat a novel exactly like a manga instead of needing a parallel implementation of all three.
@@ -136,8 +138,6 @@ class NovelSourceAdapter(val novelSource: NovelSource) : Source {
     }
 
     private companion object {
-        const val UNRECOGNIZED_NUMBER = -1f
-
         const val KEY_SOURCE_ID = "novelSourceId"
         const val KEY_NOVEL_ID = "novelId"
         const val KEY_URL = "novelChapterUrl"

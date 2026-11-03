@@ -263,6 +263,15 @@
     <string name="transition_pages_loading">Cargando páginas…</string>
     <string name="transition_pages_error">Error al cargar páginas: %1$s</string>
     <string name="novel_chapter_load_error">No se pudo cargar este capítulo</string>
+    <string name="novel_chapter_end">Fin de %1$s</string>
+    <string name="novel_next_chapter">Siguiente: %1$s</string>
+    <string name="novel_next_downloaded">Siguiente descargado: %1$s</string>
+    <string name="novel_no_more_chapters">No hay más capítulos</string>
+    <string name="novel_no_more_downloaded">No hay más capítulos descargados</string>
+    <string name="novel_next_unknown">No se puede determinar el siguiente capítulo</string>
+    <string name="novel_next_chapter_load_error">No se pudo cargar el siguiente capítulo</string>
+    <string name="novel_return_to_chapter">Volver al capítulo actual</string>
+    <string name="novel_reader_interactions">Toca la mitad superior para mostrar u ocultar los controles. Mantén pulsado el texto para seleccionar, copiar o compartir. Arrastra para ampliar la selección entre párrafos. Al final, usa el pie para abrir el siguiente capítulo.</string>
     <string name="migration_dialog_what_to_include">Elige qué datos incluir</string>
     <string name="pref_double_tap_anim_speed">Velocidad de animación de doble toque</string>
     <string name="pager_viewer">Por páginas</string>
@@ -886,4 +895,6 @@
     <string name="extensionStoresScreen.deleteStore.title">Quitar listado de extensiones</string>
     <string name="extensionStoresScreen.deleteStore.body">¿Seguro que quieres quitar el listado de extensiones «%1$s» (%2$s)?</string>
     <string name="pref_webtoon_vertical_navigator_on_left">Ubicar la interfaz de navegación en el margen izquierdo</string>
+    <string name="novel_previous_chapter">Anterior: %1$s</string>
+    <string name="novel_previous_chapter_load_error">No se pudo cargar el capítulo anterior.</string>
 </resources>

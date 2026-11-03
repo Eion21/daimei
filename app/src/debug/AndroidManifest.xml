@@ -7,6 +7,9 @@
             android:name="eu.kanade.tachiyomi.ui.reader.novel.NovelReaderDebugActivity"
             android:exported="true"
             android:label="Novel Reader (debug)" />
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

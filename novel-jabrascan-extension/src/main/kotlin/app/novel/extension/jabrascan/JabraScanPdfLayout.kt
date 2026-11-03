@@ -189,6 +189,9 @@ internal object JabraScanPdfLayout {
             if (lines[i].page == lines[i - 1].page) gaps.add(abs(lines[i].baseline - lines[i - 1].baseline))
         }
         if (gaps.size < MIN_LEADING_GAPS) return LeadingStatistic(0f, unreliable = false)
+        // Below twenty gaps, a p10 pool can contain only one observation by construction.
+        // Use the conservative previous estimator without calling that small sample unreliable.
+        if (gaps.size < 20) return LeadingStatistic(modeAtOrBelowMedian(gaps), unreliable = false)
 
         val index = ((gaps.size * 0.1).toInt() - 1).coerceAtLeast(0)
         val p10 = gaps.sorted()[index]

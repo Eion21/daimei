@@ -2,11 +2,15 @@ package app.novel.extension.jabrascan
 
 import android.util.Log
 import app.novel.source.api.ContentBlock
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.io.Writer
 import kotlin.math.abs
 
 /** The logcat tag every warning about a doubtful extraction carries. */
@@ -22,9 +26,9 @@ private const val TAG = "JabraScanPdf"
  *
  * Two things shape the split:
  *
- * - **The PDF call is the load, not a file.** The host hands the chapter over as bytes
- *   (`NovelNetwork.fetchBytes`), so the document is opened from an in-memory `ByteArray`
- *   (`PDDocument.load(byte[])`) and never written to disk.
+ * - **The host downloads into memory first.** `NovelNetwork.fetchBytes` allocates the complete response
+ *   before the extension can check its input limit. PdfBox uses bounded mixed memory and disk scratch;
+ *   its parser and font overhead are not a universal process heap limit (see [JabraScanPdfLimits]).
  * - **The extension owns the offload.** Extraction is CPU-heavy and `GetChapterContent` calls a source
  *   with no `withContext` of its own, so [extract] runs the work on [Dispatchers.IO]. Coroutines arrive
  *   from the host at runtime — they are `compileOnly` in the build file — and the extension APK ships no
@@ -47,9 +51,11 @@ internal object JabraScanPdf {
     suspend fun extract(
         bytes: ByteArray,
         chapter: ChapterIdentity? = null,
+        limits: JabraScanPdfLimits = JabraScanPdfLimits(),
+        scratchDir: File? = null,
     ): List<ContentBlock.Paragraph> =
         withContext(Dispatchers.IO) {
-            val reconstruction = extractPdf(bytes)
+            val reconstruction = extractPdf(bytes, limits, scratchDir)
             if (chapter != null) {
                 warnOnSuspiciousLayout(
                     chapter = chapter,
@@ -114,12 +120,26 @@ internal object JabraScanPdf {
      * the dispatcher hop in [extract] stays a one-liner. The text-level reconstruction itself lives in
      * [JabraScanPdfLayout], where a plain JVM test drives it.
      */
-    internal fun extractPdf(bytes: ByteArray): ParagraphReconstruction {
+    internal fun extractPdf(
+        bytes: ByteArray,
+        limits: JabraScanPdfLimits = JabraScanPdfLimits(),
+        scratchDir: File? = null,
+    ): ParagraphReconstruction {
         if (bytes.isEmpty()) return ParagraphReconstruction(emptyList(), 0f, statisticUnreliable = false)
-        val lines = PDDocument.load(bytes).use { document ->
-            PdfLineStripper().apply { sortByPosition = true }.linesFrom(document)
+        limits.checkInput(bytes.size)
+        val memory = MemoryUsageSetting.setupMixed(limits.scratchMainBytes, limits.scratchTotalBytes)
+        if (scratchDir != null) memory.setTempDir(scratchDir)
+        try {
+            return bytes.inputStream().use { input ->
+                PDDocument.load(input, memory).use { document ->
+                    limits.checkPages(document.numberOfPages)
+                    val lines = PdfLineStripper(limits).apply { sortByPosition = true }.linesFrom(document)
+                    JabraScanPdfLayout.reconstruct(lines)
+                }
+            }
+        } catch (e: IOException) {
+            throw IllegalStateException("PDF could not be read (corrupt document or scratch limit/I/O failure)", e)
         }
-        return JabraScanPdfLayout.reconstruct(lines)
     }
 }
 
@@ -132,7 +152,16 @@ internal object JabraScanPdf {
  * is the only honest signal of where a line begins and ends; the reconstruction that matters for
  * paragraphs is done afterwards, on the lines, where it is testable without PdfBox.
  */
-private class PdfLineStripper : PDFTextStripper() {
+private class PdfLineStripper(private val limits: JabraScanPdfLimits) : PDFTextStripper() {
+
+    private var glyphUnits = 0L
+    private var retainedUnits = 0L
+
+    override fun processTextPosition(text: TextPosition) {
+        glyphUnits += maxOf(1, text.unicode?.length ?: 0)
+        limits.checkText(glyphUnits)
+        super.processTextPosition(text)
+    }
 
     private data class Word(val text: String, val baseline: Float, val height: Float)
 
@@ -141,6 +170,8 @@ private class PdfLineStripper : PDFTextStripper() {
 
     override fun writeString(string: String, textPositions: List<TextPosition>) {
         if (string.isBlank() || textPositions.isEmpty()) return
+        retainedUnits += string.length
+        limits.checkText(retainedUnits)
         val baseline = textPositions.map { it.yDirAdj }.average().toFloat()
         val height = textPositions.maxOf { it.heightDir }
         words.add(Word(string.trim(), baseline, height))
@@ -157,7 +188,12 @@ private class PdfLineStripper : PDFTextStripper() {
      * visual line; a page boundary always ends one. A line's baseline is the average of its words'.
      */
     fun linesFrom(document: PDDocument): List<ExtractedLine> {
-        getText(document)
+        val discard = object : Writer() {
+            override fun write(cbuf: CharArray, off: Int, len: Int) = Unit
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
+        discard.use { writeText(document, it) }
 
         val lines = ArrayList<ExtractedLine>()
         var page = 0

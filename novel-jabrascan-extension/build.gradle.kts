@@ -6,10 +6,18 @@ plugins {
 android {
     namespace = "app.novel.extension.jabrascan"
 
+    buildTypes {
+        getByName("debug") {
+            if (providers.gradleProperty("s32PdfIsolated").orNull == "true") {
+                applicationIdSuffix = ".s32u2"
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "app.novel.extension.jabrascan"
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         // This module ships an instrumented test (the PdfBox end-to-end proof). The base
         // convention does not set a runner, so it is declared here.

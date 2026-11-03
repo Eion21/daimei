@@ -176,7 +176,11 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
                     "the row is kept, but there is no default root to download it from",
             )
         val bytes = network.fetchBytes(JabraScanUrls.chapterPdfUrl(root, work, file, chapter.number))
-        val paragraphs = JabraScanPdf.extract(bytes, ChapterIdentity(work = work, chapter = chapter.title))
+        val paragraphs = JabraScanPdf.extract(
+            bytes,
+            ChapterIdentity(work = work, chapter = chapter.title),
+            scratchDir = if (this::context.isInitialized) context.cacheDir else null,
+        )
         return ChapterContent(paragraphs)
     }
 

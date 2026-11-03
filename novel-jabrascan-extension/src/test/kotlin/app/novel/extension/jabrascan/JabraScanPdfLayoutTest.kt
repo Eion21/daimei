@@ -1,6 +1,7 @@
 package app.novel.extension.jabrascan
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -104,11 +105,11 @@ class JabraScanPdfLayoutTest {
 
     @Test
     fun `a chapter whose gaps are one single group is not split and flags the statistic`() {
-        // Nineteen same-page gaps, all 12.0 pt: the p10 pool (everything at or below the p10) is the whole
+        // Twenty same-page gaps, all 12.0 pt: the p10 pool (everything at or below the p10) is the whole
         // population, so there is one single group and no ordinary-versus-break separation. The guard must
         // return a 0f leading — which is what keeps the chapter whole — and flag the statistic, so the
         // fallback leading the rule would otherwise have found (12.0) must NOT come back.
-        val lines = (1..20).map { line("Line $it of the uniform block", (it - 1) * 12f) }
+        val lines = (1..21).map { line("Line $it of the uniform block", (it - 1) * 12f) }
 
         val reconstruction = JabraScanPdfLayout.reconstruct(lines)
 
@@ -122,13 +123,10 @@ class JabraScanPdfLayoutTest {
 
     @Test
     fun `one stray tiny gap does not drag the leading and flags the statistic`() {
-        // Twenty lines, so nineteen same-page gaps: one stray 1.0 pt followed by eighteen ordinary 10.0 pt
-        // gaps. With nineteen gaps the 10th-percentile index is 0, so the p10 lands on the stray and its
-        // whole pool is that single isolated value — no 0.1 pt bucket holds two gaps. The stray must not set
-        // the leading: the fallback keeps the ordinary 10.0 pt, so the eighteen ordinary gaps stay one
-        // paragraph (a 1.0 pt leading would instead have broken all of them), and the statistic is flagged.
-        val baselines = ArrayList<Float>(listOf(0f, 1f))
-        repeat(18) { baselines.add(baselines.last() + 10f) }
+        // Two isolated small gaps among twenty-one make a singleton-bucket p10 pool; the fallback
+        // preserves the ordinary 10 pt leading and the real warning for an adequately sized sample.
+        val baselines = ArrayList<Float>(listOf(0f, 1f, 3f))
+        repeat(19) { baselines.add(baselines.last() + 10f) }
         val lines = baselines.mapIndexed { i, baseline -> line("Line ${i + 1}", baseline) }
 
         val reconstruction = JabraScanPdfLayout.reconstruct(lines)
@@ -139,6 +137,17 @@ class JabraScanPdfLayoutTest {
             reconstruction.statisticUnreliable,
             "a p10 dragged onto an isolated gap must report the leading statistic as unreliable",
         )
+    }
+
+    @Test
+    fun `a short valid chapter with slightly jittered gaps keeps its text without an unreliable statistic`() {
+        val baselines = listOf(100f, 110f, 120.2f, 130.3f, 140.5f, 150.6f, 160.8f)
+        val lines = baselines.mapIndexed { i, baseline -> line("Invented prose line ${i + 1}", baseline) }
+
+        val reconstruction = JabraScanPdfLayout.reconstruct(lines)
+
+        assertEquals(lines.joinToString(" ") { it.text }, reconstruction.paragraphs.joinToString(" "))
+        assertFalse(reconstruction.statisticUnreliable, "ordinary short prose must not be flagged unreliable")
     }
 
     private fun line(text: String, baseline: Float, page: Int = 0) = ExtractedLine(text, baseline, page)

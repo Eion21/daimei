@@ -268,7 +268,15 @@ internal object MatchaNovelsParsing {
             val separator = pair.indexOf('=')
             if (separator <= 0) continue
             if (pair.substring(0, separator) == "url") {
-                return percentDecode(pair.substring(separator + 1)).takeIf { it.isNotBlank() }
+                val value = pair.substring(separator + 1)
+                val address = if (value.startsWith("https://", ignoreCase = true) ||
+                    value.startsWith("http://", ignoreCase = true) || value.startsWith("/")
+                ) {
+                    value
+                } else {
+                    percentDecode(value)
+                }
+                return address.takeIf { it.isNotBlank() }
             }
         }
         return null
@@ -469,7 +477,7 @@ internal object MatchaNovelsParsing {
     }
 
     private fun percentDecode(value: String): String =
-        runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+        runCatching { URLDecoder.decode(value.replace("+", "%2B"), "UTF-8") }.getOrDefault(value)
 
     /** The path part of an href, so an absolute chapter link matches the same patterns. */
     private fun pathOf(href: String): String {

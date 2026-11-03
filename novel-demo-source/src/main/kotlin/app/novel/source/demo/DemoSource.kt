@@ -20,7 +20,7 @@ class DemoSource : NovelSource {
         NovelPage(if (page == 1) novels else emptyList(), hasNextPage = false)
 
     override suspend fun search(query: String, page: Int): NovelPage =
-        NovelPage(novels.filter { it.title.contains(query, ignoreCase = true) }, false)
+        NovelPage(if (page == 1) novels.filter { it.title.contains(query, ignoreCase = true) } else emptyList(), false)
 
     override suspend fun getNovelDetails(novel: Novel): Novel =
         novel.copy(description = "Novela de prueba con contenido determinista.")

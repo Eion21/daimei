@@ -42,6 +42,27 @@ class MatchaNovelsParsingTest {
     }
 
     @Test
+    fun `catalogue preserves an already shaped image URI in the proxy parameter`() {
+        val uri = "https://cdn.example/covers/a%2Fb+verde%20claro.jpg?token=a%2Bb+c"
+        val html = """<article data-mn-tarjeta><a href="/novela/Prueba" aria-label="Prueba">""" +
+            """<img src="/_next/image?url=$uri&amp;w=640"></a></article>"""
+
+        assertEquals(uri, MatchaNovelsParsing.parseCatalogue(html).single().coverUrl)
+    }
+
+    @Test
+    fun `catalogue decodes the image transport wrapper once without treating plus as space`() {
+        val encoded = "https%3A%2F%2Fcdn.example%2Fcovers%2Fa%252Fb+verde%2520claro.jpg%3Ftoken%3Da%252Bb"
+        val html = """<article data-mn-tarjeta><a href="/novela/Prueba" aria-label="Prueba">""" +
+            """<img src="/_next/image?url=$encoded&amp;w=640"></a></article>"""
+
+        assertEquals(
+            "https://cdn.example/covers/a%2Fb+verde%20claro.jpg?token=a%2Bb",
+            MatchaNovelsParsing.parseCatalogue(html).single().coverUrl,
+        )
+    }
+
+    @Test
     fun `search folds case and accents over the parsed catalogue`() {
         val novels = MatchaNovelsParsing.parseCatalogue(TestPages.CATALOGUE)
 

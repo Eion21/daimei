@@ -86,7 +86,15 @@ class SkyNovelsSourceTest {
         val source = source(mapOf(TestFixtures.CHAPTER_URL to TestFixtures.CHAPTER_MARKDOWN))
 
         val content = source.getChapterContent(chapter())
-        assertEquals(5, content.blocks.size)
+        assertEquals(
+            listOf(
+                ContentBlock.Heading("Capítulo 1: El comienzo", level = 2),
+                ContentBlock.Paragraph("Había una vez un hombre singular. Su nombre era Ferda."),
+                ContentBlock.Divider,
+                ContentBlock.Paragraph("Fin."),
+            ),
+            content.blocks,
+        )
         assertTrue(content.blocks.none { it is ContentBlock.Paragraph && it.text.contains('\u200b') })
     }
 

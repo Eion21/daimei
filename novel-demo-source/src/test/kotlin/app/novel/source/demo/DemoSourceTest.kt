@@ -30,6 +30,20 @@ class DemoSourceTest {
     }
 
     @Test
+    fun `search only returns filtered catalogue on the first page`() = runBlocking {
+        val first = source.search("TORRE", 1)
+        assertEquals(listOf("La torre de cristal"), first.novels.map { it.title })
+        assertEquals(false, first.hasNextPage)
+        assertEquals(source.popular(1).novels, source.search("", 1).novels)
+
+        for (pageNumber in listOf(0, 2, 3)) {
+            val page = source.search("torre", pageNumber)
+            assertTrue(page.novels.isEmpty(), "page $pageNumber")
+            assertEquals(false, page.hasNextPage)
+        }
+    }
+
+    @Test
     fun `getChapters returns 5 chapters`() = runBlocking {
         val novel = source.popular(1).novels[0]
         val chapters = source.getChapters(novel)

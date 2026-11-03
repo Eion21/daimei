@@ -115,8 +115,12 @@ class HttpNovelSource(
      *   and is reported as a different exception for exactly that reason.
      */
     override suspend fun getChapterContent(chapter: Chapter): ChapterContent {
-        val url = chapter.url?.let(::absolute)
+        val chapterUrl = chapter.url?.takeIf { it.isNotBlank() }
             ?: throw IOException("Chapter ${chapter.id} carries no url, so its page cannot be read")
+        val scheme = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*):").find(chapterUrl)?.groupValues?.get(1)
+        val url = chapterUrl.takeIf { scheme == null || scheme.equals("http", true) || scheme.equals("https", true) }
+            ?.let(::absolute)
+            ?: throw IOException("Chapter ${chapter.id} carries a malformed url, so its page cannot be read")
         val html = get(url)
             ?: throw IOException("The chapter page at $url could not be read")
 
@@ -127,13 +131,19 @@ class HttpNovelSource(
 
         // Inline srcs are relative to the chapter document, not the library base or detail page.
         // Resolve here, where the page URL is known, before the content is cached or handed to Coil.
-        return content.copy(blocks = content.blocks.map { block ->
-            if (block is ContentBlock.Image) {
-                block.copy(url = checkNotNull(url.resolve(block.url)) { "Invalid inline image URL: ${block.url}" }.toString())
-            } else {
-                block
-            }
-        })
+        return content.copy(
+            blocks = content.blocks.map { block ->
+                if (block is ContentBlock.Image) {
+                    block.copy(
+                        url = checkNotNull(url.resolve(block.url)) {
+                            "Invalid inline image URL: ${block.url}"
+                        }.toString(),
+                    )
+                } else {
+                    block
+                }
+            },
+        )
     }
 
     /**

@@ -138,12 +138,43 @@ class SkyNovelsParsingTest {
         assertEquals(
             listOf(
                 ContentBlock.Heading("Capítulo 1: El comienzo", level = 2),
-                ContentBlock.Paragraph("Había una vez un hombre singular."),
-                ContentBlock.Paragraph("Su nombre era Ferda."),
+                ContentBlock.Paragraph("Había una vez un hombre singular. Su nombre era Ferda."),
                 ContentBlock.Divider,
                 ContentBlock.Paragraph("Fin."),
             ),
             blocks,
+        )
+    }
+
+    @Test
+    fun `markdown soft wraps join prose while blank lines and structural blocks separate it`() {
+        val markdown = """
+            Primera línea
+            continúa aquí.
+
+            Otro párrafo.
+            ## Título
+            Después del título
+            sigue el texto.
+            ![Portada](https://img.example/cover.png)
+            Antes de la regla.
+            ---
+            Texto final
+            continúa.
+        """.trimIndent()
+
+        assertEquals(
+            listOf(
+                ContentBlock.Paragraph("Primera línea continúa aquí."),
+                ContentBlock.Paragraph("Otro párrafo."),
+                ContentBlock.Heading("Título", 2),
+                ContentBlock.Paragraph("Después del título sigue el texto."),
+                ContentBlock.Image("https://img.example/cover.png", "Portada"),
+                ContentBlock.Paragraph("Antes de la regla."),
+                ContentBlock.Divider,
+                ContentBlock.Paragraph("Texto final continúa."),
+            ),
+            SkyNovelsParsing.parseChapterText(markdown),
         )
     }
 

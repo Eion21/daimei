@@ -4,14 +4,16 @@ import app.novel.source.api.NovelSource
 import java.util.concurrent.CopyOnWriteArrayList
 
 class SourceRegistry {
-    private val sources = java.util.concurrent.ConcurrentHashMap<String, NovelSource>()
+    private data class State(
+        val sources: Map<String, NovelSource> = emptyMap(),
+        val sourcesBySourceId: Map<Long, NovelSource> = emptyMap(),
+    )
 
-    /**
-     * The same sources indexed by the numeric id Mihon persists, so a stored row can be resolved back to the source
-     * it came from. Derived with [NovelSourceId] rather than stored, because the registry never learns an id from
-     * outside: it only knows sources, and the mapping is the whole point.
-     */
-    private val sourcesBySourceId = java.util.concurrent.ConcurrentHashMap<Long, NovelSource>()
+    private val writerLock = Any()
+
+    // Both indexes are published together; maps in a published state are never mutated.
+    @Volatile
+    private var state = State()
 
     /**
      * Called after the registry's content changes, so a consumer can rebuild from the current state instead of the
@@ -23,13 +25,15 @@ class SourceRegistry {
 
     fun register(source: NovelSource) {
         val id = source.info.id
-        val previous = sources.put(id, source)
-        sourcesBySourceId[NovelSourceId.generate(id)] = source
-        // Re-registering the same instance is not a change: notifying would only make every listener rebuild the
-        // state it already has, and a source that arrives from an install event is registered on every reload.
-        if (previous !== source) {
-            notifyChanged()
+        val numericId = NovelSourceId.generate(id)
+        val changed = synchronized(writerLock) {
+            val current = state
+            val previous = current.sources[id]
+            state = State(current.sources + (id to source), current.sourcesBySourceId + (numericId to source))
+            previous !== source
         }
+        // Callbacks rebuild the latest state and must not run under the writer lock.
+        if (changed) notifyChanged()
     }
 
     /**
@@ -40,12 +44,20 @@ class SourceRegistry {
      * when there was something to remove.
      */
     fun unregister(id: String) {
-        if (sources.remove(id) == null) return
-        sourcesBySourceId.remove(NovelSourceId.generate(id))
-        notifyChanged()
+        val numericId = NovelSourceId.generate(id)
+        val changed = synchronized(writerLock) {
+            val current = state
+            if (id !in current.sources) {
+                false
+            } else {
+                state = State(current.sources - id, current.sourcesBySourceId - numericId)
+                true
+            }
+        }
+        if (changed) notifyChanged()
     }
 
-    fun get(id: String): NovelSource? = sources[id]
+    fun get(id: String): NovelSource? = state.sources[id]
 
     /**
      * The source [sourceId] identifies, or null when nothing registered derives that id.
@@ -54,9 +66,9 @@ class SourceRegistry {
      * is already in the library gets back to the source that can fetch it. Null rather than an error: a source that
      * was removed or is not enabled yet is a normal state, not a failure.
      */
-    fun getBySourceId(sourceId: Long): NovelSource? = sourcesBySourceId[sourceId]
+    fun getBySourceId(sourceId: Long): NovelSource? = state.sourcesBySourceId[sourceId]
 
-    fun all(): List<NovelSource> = sources.values.sortedBy { it.info.name }
+    fun all(): List<NovelSource> = state.sources.values.sortedBy { it.info.name }
 
     /** Registers [listener] to be called after every change; see [listeners]. */
     fun addListener(listener: () -> Unit) {

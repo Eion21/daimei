@@ -238,23 +238,36 @@ internal object SkyNovelsParsing {
      */
     private fun parseMarkdown(text: String): List<ContentBlock> {
         val blocks = mutableListOf<ContentBlock>()
+        val paragraph = mutableListOf<String>()
+        fun flushParagraph() {
+            if (paragraph.isNotEmpty()) {
+                blocks += ContentBlock.Paragraph(paragraph.joinToString(" "))
+                paragraph.clear()
+            }
+        }
         for (rawLine in text.split('\n')) {
             val line = rawLine.trim()
-            if (line.isEmpty()) continue
+            if (line.isEmpty()) {
+                flushParagraph()
+                continue
+            }
 
             val heading = HEADING.matchEntire(line)
             if (heading != null) {
+                flushParagraph()
                 val level = heading.groupValues[1].length
                 val title = stripInline(heading.groupValues[2])
                 if (title.isNotBlank()) blocks += ContentBlock.Heading(title, level)
                 continue
             }
             if (HR.matches(line)) {
+                flushParagraph()
                 blocks += ContentBlock.Divider
                 continue
             }
             val image = IMAGE_ONLY.matchEntire(line)
             if (image != null) {
+                flushParagraph()
                 val url = image.groupValues[2].trim()
                 if (url.isNotBlank()) {
                     blocks += ContentBlock.Image(url, image.groupValues[1].trim().takeIf { it.isNotBlank() })
@@ -265,8 +278,11 @@ internal object SkyNovelsParsing {
             val unquoted = line.removePrefix(">").trim()
             val listItem = LIST_ITEM.matchEntire(unquoted)
             val prose = stripInline(listItem?.groupValues?.get(2) ?: unquoted)
-            if (prose.isNotBlank()) blocks += ContentBlock.Paragraph(prose)
+            if (listItem != null) flushParagraph()
+            if (prose.isNotBlank()) paragraph += prose
+            if (listItem != null) flushParagraph()
         }
+        flushParagraph()
         return blocks
     }
 
@@ -290,7 +306,7 @@ internal object SkyNovelsParsing {
         val converted = ProseHtml.convert(html) { tag ->
             hasMarkup = true
             when {
-                tag.name == "br" -> "\n"
+                tag.name == "br" -> "\n\n"
                 tag.name == "hr" -> "\n---\n"
                 tag.name in HTML_HEADINGS -> if (tag.closing) {
                     "\n"
@@ -300,10 +316,10 @@ internal object SkyNovelsParsing {
                 }
                 tag.name == "img" && !tag.closing -> {
                     val src = tag.attributes["src"].orEmpty()
-                    if (src.isBlank()) "" else "![${tag.attributes["alt"].orEmpty()}]($src)"
+                    if (src.isBlank()) "" else "\n\n![${tag.attributes["alt"].orEmpty()}]($src)\n\n"
                 }
-                tag.name == "li" -> if (tag.closing) "\n" else "\n- "
-                tag.name in HTML_BLOCKS -> "\n"
+                tag.name == "li" -> if (tag.closing) "\n\n" else "\n\n- "
+                tag.name in HTML_BLOCKS -> "\n\n"
                 else -> ""
             }
         }

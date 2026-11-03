@@ -162,10 +162,43 @@ class HttpNovelSourceTest {
         val (source, wire) = source()
         wire.requestedUrls.clear()
 
-        assertFailsWith<IOException> {
+        val error = assertFailsWith<IOException> {
             source.getChapterContent(Chapter(SOURCE_ID, "torre-de-cristal", "x", "Sin url", url = null))
         }
+        assertEquals("Chapter x carries no url, so its page cannot be read", error.message)
         assertEquals(emptyList(), wire.requestedUrls)
+    }
+
+    @Test
+    fun `blank chapter URLs are missing and never fetch the root page`() = runBlocking {
+        val (source, wire) = source(overrides = mapOf("/" to "<p>Root page</p>"))
+        for (url in listOf("", "   ")) {
+            val error = assertFailsWith<IOException> {
+                source.getChapterContent(Chapter(SOURCE_ID, "torre-de-cristal", "x", "Sin url", url = url))
+            }
+            assertEquals("Chapter x carries no url, so its page cannot be read", error.message)
+            assertEquals(emptyList(), wire.requestedUrls)
+        }
+    }
+
+    @Test
+    fun `malformed chapter URLs report a distinct error without a request`() = runBlocking {
+        val (source, wire) = source()
+        for (url in listOf("http://[invalid", "ftp://example.com/chapter")) {
+            val error = assertFailsWith<IOException> {
+                source.getChapterContent(Chapter(SOURCE_ID, "torre-de-cristal", "x", "URL inválida", url = url))
+            }
+            assertEquals("Chapter x carries a malformed url, so its page cannot be read", error.message)
+            assertEquals(emptyList(), wire.requestedUrls)
+        }
+    }
+
+    @Test
+    fun `a relative chapter URL still resolves against the base`() = runBlocking {
+        val (source, wire) = source()
+        val content = source.getChapterContent(chapterOne().copy(url = "chapter/torre-de-cristal-1.html"))
+        assertEquals(listOf(CHAPTER_URL), wire.requestedUrls)
+        assertTrue(content.blocks.isNotEmpty())
     }
 
     @Test

@@ -8,8 +8,8 @@ android {
 
     defaultConfig {
         applicationId = "app.novel.extension.jabrascan"
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // This module ships an instrumented test (the PdfBox end-to-end proof). The base
         // convention does not set a runner, so it is declared here.

@@ -36,7 +36,7 @@ class SkyNovelsSource : NetworkedNovelSource {
     override val info = SourceInfo(
         id = SkyNovelsParsing.SOURCE_ID,
         name = "SkyNovels",
-        version = "1.0.0",
+        version = "1.0.1",
         language = "es",
     )
 

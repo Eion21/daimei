@@ -21,9 +21,6 @@ internal object JabraScanXml {
     private const val CDATA_OPEN = "<![CDATA["
     private const val CDATA_CLOSE = "]]>"
 
-    /** A tag is `<`, an optional `/`, a letter, then anything up to `>`; `<3` and `a < b` are prose. */
-    private val TAG = Regex("</?[a-zA-Z][^>]*>")
-
     private val ENTITY = Regex("&(amp|lt|gt|quot|apos);")
 
     private val ENCODED = mapOf(
@@ -66,11 +63,10 @@ internal object JabraScanXml {
      * entities decoded. Whitespace is left as written; callers that need one line fold it themselves.
      *
      * Markup is removed inside the CDATA section too, because the real sinopsis that carries one carries
-     * an `<a>` element as well. Only a `<` followed by an optional `/` and a letter starts a tag, so the
-     * intentional `<a href="...">...</a>` is removed while a lone `<` in the prose survives: the one
-     * measured CDATA with a literal `<` is exactly that link, and `a < b` or `<3` keep their `<`.
+     * an `<a>` element as well. Only complete recognized HTML tags with valid attributes are
+     * removed. Comparisons and incomplete markup stay literal; quoted `>` stays inside attributes.
      */
-    fun text(body: String): String = decode(unwrapCdata(body).replace(TAG, ""))
+    fun text(body: String): String = decode(ProseHtml.convert(unwrapCdata(body)) { "" })
 
     /** Replaces `<![CDATA[` and `]]>` with nothing, so the section's own text joins the body's. */
     private fun unwrapCdata(body: String): String {

@@ -127,4 +127,22 @@ class MatchaNovelsSourceTest {
 
         assertThrows(IllegalStateException::class.java) { runBlocking { source.getChapterContent(chapter) } }
     }
+
+    @Test
+    fun `getChapters exposes invalid or truncated payload failures to the host`() {
+        for (payload in listOf("null", "[]", "[[\"1\",\"date\",false,null,null]]")) {
+            val page = "<script>{\"total\":2,\"capitulos\":$payload}</script>" + TestPages.NOVEL
+            val failure = assertThrows(IllegalStateException::class.java) {
+                runBlocking { source(mapOf(novelUrl to page)).getChapters(novel) }
+            }
+            assertTrue(failure.message!!.startsWith("MatchaNovels: invalid chapter payload"))
+        }
+    }
+
+    @Test
+    fun `getChapters accepts complete payloads with nested metadata before the chapter list`() = runBlocking {
+        val page = TestPages.payloadNovel(novel.id, listOf(TestPages.chapterRow("1")), escaped = false)
+            .replace("\"capitulos\":", "\"metadata\":{\"note\":\"A { brace\"},\"capitulos\":")
+        assertEquals(listOf("1"), source(mapOf(novelUrl to page)).getChapters(novel).map { it.id })
+    }
 }

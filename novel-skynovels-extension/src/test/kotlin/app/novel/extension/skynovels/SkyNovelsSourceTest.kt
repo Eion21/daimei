@@ -97,6 +97,13 @@ class SkyNovelsSourceTest {
         assertThrows(IllegalStateException::class.java) { runBlocking { source.getChapterContent(chapter()) } }
     }
 
+    @Test
+    fun `getChapterContent preserves HTML comparisons through the source API`() = runBlocking {
+        val response = """{"chapter":{"chp_content":"<p title='x > y'>Si a < b y c > d. <em>Fin.</em></p>"}}"""
+        val content = source(mapOf(TestFixtures.CHAPTER_URL to response)).getChapterContent(chapter())
+        assertEquals(listOf(ContentBlock.Paragraph("Si a < b y c > d. Fin.")), content.blocks)
+    }
+
     private fun chapter() = Chapter(
         sourceId = "skynovels",
         novelId = "866",

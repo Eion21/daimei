@@ -32,7 +32,7 @@ class MatchaNovelsSource : NetworkedNovelSource {
     override val info = SourceInfo(
         id = MatchaNovelsParsing.SOURCE_ID,
         name = "MatchaNovels",
-        version = "1.0.0",
+        version = "1.0.1",
         language = "es",
     )
 

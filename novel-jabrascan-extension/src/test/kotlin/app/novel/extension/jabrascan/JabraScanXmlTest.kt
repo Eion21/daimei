@@ -81,4 +81,20 @@ class JabraScanXmlTest {
     fun `a CDATA section that is never closed fails`() {
         assertThrows(IllegalStateException::class.java) { JabraScanXml.text("<![CDATA[sin cierre") }
     }
+
+    @Test
+    fun `tag-like comparisons and quoted attributes preserve complete synopsis prose`() {
+        assertEquals(
+            "Si a<b y c>d. Fin & más.",
+            JabraScanXml.text("<![CDATA[Si a<b y c>d. <a title=\"x > y\" href='url'>Fin</a> &amp; más.]]>"),
+        )
+    }
+
+    @Test
+    fun `escaped tags stay literal and incomplete tags cannot consume prose`() {
+        assertEquals(
+            "<b>literal</b> y <em sin cierre",
+            JabraScanXml.text("&lt;b&gt;literal&lt;/b&gt; y <em sin cierre"),
+        )
+    }
 }

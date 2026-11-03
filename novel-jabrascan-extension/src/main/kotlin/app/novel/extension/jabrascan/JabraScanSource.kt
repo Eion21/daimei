@@ -91,7 +91,7 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
     override val info = SourceInfo(
         id = JabraScanParsing.SOURCE_ID,
         name = "JabraScan",
-        version = "1.0",
+        version = "1.0.1",
         language = "es",
     )
 

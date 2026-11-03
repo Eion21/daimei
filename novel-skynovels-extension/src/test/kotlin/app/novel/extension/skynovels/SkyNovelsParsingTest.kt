@@ -231,5 +231,39 @@ class SkyNovelsParsingTest {
         assertThrows(IllegalStateException::class.java) { SkyNovelsJson.parse("""{"novels":[""") }
     }
 
+    @Test
+    fun `HTML preserves comparisons and quoted greater-than attributes`() {
+        assertEquals(
+            listOf(ContentBlock.Paragraph("Si a < b y c > d, sigue. Fin.")),
+            SkyNovelsParsing.parseChapterText("<p title=\"x > y\">Si a < b y c > d, sigue. <em>Fin.</em></p>"),
+        )
+    }
+
+    @Test
+    fun `HTML headings images breaks and lists keep structure with quoted attributes`() {
+        assertEquals(
+            listOf(
+                ContentBlock.Heading("Título", 2),
+                ContentBlock.Paragraph("Uno"),
+                ContentBlock.Paragraph("Dos"),
+                ContentBlock.Image("https://img.example/a.png", "A > B"),
+                ContentBlock.Divider,
+                ContentBlock.Paragraph("Fin"),
+            ),
+            SkyNovelsParsing.parseChapterText(
+                "<h2 title='a > b'>Título</h2><ul><li>Uno<br>Dos</li></ul>" +
+                    "<img src='https://img.example/a.png' alt='A > B'><hr><p>Fin</p>",
+            ),
+        )
+    }
+
+    @Test
+    fun `plain markdown keeps literal entities and angle comparisons`() {
+        assertEquals(
+            listOf(ContentBlock.Paragraph("a<b y c>d. &lt;literal&gt;")),
+            SkyNovelsParsing.parseChapterText("a<b y c>d. &lt;literal&gt;"),
+        )
+    }
+
     private fun novel() = Novel(sourceId = "skynovels", id = "866", title = "El Dominio del Emperador")
 }

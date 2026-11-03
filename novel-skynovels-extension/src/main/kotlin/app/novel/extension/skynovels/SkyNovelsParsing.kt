@@ -200,7 +200,7 @@ internal object SkyNovelsParsing {
      */
     fun parseChapterText(raw: String): List<ContentBlock> {
         val visible = stripInvisible(raw)
-        val markdown = if (looksLikeHtml(visible)) markdownFromHtml(visible) else visible
+        val markdown = markdownFromHtml(visible)
         return parseMarkdown(markdown)
     }
 
@@ -286,28 +286,29 @@ internal object SkyNovelsParsing {
      * reader runs afterwards, a chapter that mixes both forms is read correctly too.
      */
     private fun markdownFromHtml(html: String): String {
-        var out = HTML_BR.replace(html, "\n")
-        out = HTML_HR.replace(out, "\n---\n")
-        out = HTML_HEADING.replace(out) { match ->
-            "\n" + "#".repeat(match.groupValues[1].toInt()) + " " + match.groupValues[2] + "\n"
-        }
-        out = HTML_IMAGE.replace(out) { match ->
-            val tag = match.value
-            val src = HTML_SRC.find(tag)?.groupValues?.get(1).orEmpty()
-            if (src.isBlank()) {
-                ""
-            } else {
-                val alt = HTML_ALT.find(tag)?.groupValues?.get(1).orEmpty()
-                "![$alt]($src)"
+        var hasMarkup = false
+        val converted = ProseHtml.convert(html) { tag ->
+            hasMarkup = true
+            when {
+                tag.name == "br" -> "\n"
+                tag.name == "hr" -> "\n---\n"
+                tag.name in HTML_HEADINGS -> if (tag.closing) {
+                    "\n"
+                } else {
+                    "\n" + "#".repeat(tag.name[1].digitToInt()) +
+                        " "
+                }
+                tag.name == "img" && !tag.closing -> {
+                    val src = tag.attributes["src"].orEmpty()
+                    if (src.isBlank()) "" else "![${tag.attributes["alt"].orEmpty()}]($src)"
+                }
+                tag.name == "li" -> if (tag.closing) "\n" else "\n- "
+                tag.name in HTML_BLOCKS -> "\n"
+                else -> ""
             }
         }
-        out = HTML_LIST_ITEM.replace(out, "\n- ")
-        out = HTML_BLOCK_BOUNDARY.replace(out, "\n")
-        out = TAG.replace(out, "")
-        return decodeEntities(out)
+        return if (hasMarkup) decodeEntities(converted) else html
     }
-
-    private fun looksLikeHtml(text: String): Boolean = HTML_TAG.containsMatchIn(text)
 
     // ---- Small pure helpers -----------------------------------------------------------------
 
@@ -315,12 +316,19 @@ internal object SkyNovelsParsing {
     fun normalize(text: String): String = text.replace('\u00A0', ' ').replace(WHITESPACE, " ").trim()
 
     /** A synopsis may be plain, HTML or markdown; it is reduced to one readable line. */
-    private fun cleanSynopsis(text: String): String {
-        var out = HTML_BREAK.replace(stripInvisible(text), " ")
-        out = HTML_BLOCK_BOUNDARY.replace(out, " ")
-        out = TAG.replace(out, "")
-        return normalize(decodeEntities(out))
-    }
+    private fun cleanSynopsis(text: String): String = normalize(
+        decodeEntities(
+            ProseHtml.convert(stripInvisible(text)) { tag ->
+                if (tag.name in HTML_BLOCKS || tag.name in HTML_HEADINGS ||
+                    tag.name in setOf("br", "hr", "li")
+                ) {
+                    " "
+                } else {
+                    ""
+                }
+            },
+        ),
+    )
 
     /** A display id from a JSON scalar that may be a number or a string, as the API mixes both. */
     private fun idText(value: Any?): String? = when (value) {
@@ -387,19 +395,11 @@ internal object SkyNovelsParsing {
     private val IMAGE_INLINE = Regex("!\\[([^\\]]*)\\]\\([^)]*\\)")
     private val LINK = Regex("\\[([^\\]]*)\\]\\([^)]*\\)")
 
-    /** Matches an opening or closing HTML tag whose name starts with a letter; `< 3` is not one. */
-    private val HTML_TAG = Regex("(?i)</?[a-z][a-z0-9]*\\b[^<>]*>")
-    private val HTML_BR = Regex("(?i)<br\\s*/?\\s*>")
-    private val HTML_HR = Regex("(?i)<hr\\s*/?\\s*>")
-    private val HTML_BREAK = Regex("(?i)<(?:br|hr)\\b[^>]*>")
-    private val HTML_HEADING = Regex("(?is)<h([1-6])\\b[^>]*>(.*?)</h\\1\\s*>")
-    private val HTML_IMAGE = Regex("(?i)<img\\b[^>]*>")
-    private val HTML_SRC = Regex("(?i)\\bsrc\\s*=\\s*[\"']?([^\"'>\\s]+)")
-    private val HTML_ALT = Regex("(?i)\\balt\\s*=\\s*\"([^\"]*)\"")
-    private val HTML_LIST_ITEM = Regex("(?i)<li\\b[^>]*>")
-    private val HTML_BLOCK_BOUNDARY =
-        Regex("(?i)</?(?:p|div|blockquote|section|article|table|tr|ul|ol|dl|dt|dd|figure|figcaption|h[1-6])\\b[^>]*>")
-    private val TAG = Regex("<[^>]*>")
+    private val HTML_HEADINGS = setOf("h1", "h2", "h3", "h4", "h5", "h6")
+    private val HTML_BLOCKS = setOf(
+        "p", "div", "blockquote", "section", "article", "table", "tr", "ul", "ol", "dl", "dt",
+        "dd", "figure", "figcaption",
+    )
 
     private val NAMED_ENTITIES = mapOf(
         "amp" to "&",

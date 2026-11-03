@@ -4,6 +4,7 @@ import app.novel.source.api.ContentBlock
 import app.novel.source.api.Novel
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -132,18 +133,57 @@ class MatchaNovelsParsingTest {
     }
 
     @Test
-    fun `a payload row whose number is not numeric is skipped`() {
-        val slug = "Some-Novela"
-        val rows = listOf(
-            TestPages.chapterRow("1"),
-            """["abc","22 jul 26",false,null,null]""",
-            TestPages.chapterRow("3"),
-        )
-        val html = TestPages.payloadNovel(slug, rows, escaped = true)
+    fun `an invalid payload row fails instead of silently shortening the list`() {
+        for (escaped in listOf(false, true)) {
+            val html = TestPages.payloadNovel(
+                "Some-Novela",
+                listOf(TestPages.chapterRow("1"), TestPages.chapterRow("abc")),
+                escaped,
+            )
+            assertThrows(IllegalStateException::class.java) {
+                MatchaNovelsParsing.parseChapterList(html, novel("Some-Novela"))
+            }
+        }
+    }
 
-        val chapters = MatchaNovelsParsing.parseChapterList(html, novel(slug))
+    @Test
+    fun `malformed payload never falls back to rendered links or an empty list`() {
+        for (payload in listOf("null", "[", "[[1]]", "[[\"1\"]]", "[[\"1\",broken]]")) {
+            val html = "<script>{\"capitulos\":$payload}</script>" + TestPages.NOVEL
+            val failure = assertThrows(IllegalStateException::class.java) {
+                MatchaNovelsParsing.parseChapterList(html, novel("I-Married-The-Dragon-I-Killed"))
+            }
+            assertTrue(failure.message!!.contains("MatchaNovels"))
+        }
+    }
 
-        assertEquals(listOf(1f, 3f), chapters.map { it.number })
+    @Test
+    fun `declared total must match the complete validated row count`() {
+        for (escaped in listOf(false, true)) {
+            val html = TestPages.payloadNovel("Some-Novela", listOf(TestPages.chapterRow("1")), escaped)
+            val quote = if (escaped) "\\\"" else "\""
+            val truncated = html.replace("${quote}total$quote:1", "${quote}total$quote:2")
+            assertThrows(IllegalStateException::class.java) {
+                MatchaNovelsParsing.parseChapterList(truncated, novel("Some-Novela"))
+            }
+        }
+    }
+
+    @Test
+    fun `duplicate rows and malformed row separators cannot produce a partial success`() {
+        for (rows in listOf(
+            listOf(TestPages.chapterRow("1"), TestPages.chapterRow("1")),
+            listOf(TestPages.chapterRow("1") + " garbage " + TestPages.chapterRow("2")),
+        )) {
+            assertThrows(IllegalStateException::class.java) {
+                MatchaNovelsParsing.parseChapterList(TestPages.payloadNovel("N", rows), novel("N"))
+            }
+        }
+    }
+
+    @Test
+    fun `a genuinely empty chapter payload remains empty`() {
+        assertTrue(MatchaNovelsParsing.parseChapterList(TestPages.payloadNovel("N", emptyList()), novel("N")).isEmpty())
     }
 
     @Test

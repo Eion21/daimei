@@ -117,34 +117,71 @@ internal object MatchaNovelsParsing {
         parseChapterPayload(html, novel) ?: parseChapterLinks(html, novel)
 
     /**
-     * The full chapter list, read from the `capitulos` array of the page's flight payload. The
-     * array holds one row per chapter — `["1","22 jul 26",false,null,null]` — and, unlike the
-     * rendered anchors, is not truncated. Rows whose first field is not a number are skipped rather
-     * than guessed at.
-     *
-     * The key is accepted in both the plain and the backslash-escaped form, because the payload is
-     * embedded inside a JavaScript string literal and the served document escapes its quotes:
-     * `\"capitulos\":[[\"1\",...`. The chapter `url` uses the payload's own `slug` when it carries
-     * one, so a page reached by a stale id still links to its real chapters. Returns null when the
-     * page carries no `capitulos` array, so the caller can fall back to the anchors.
+     * An absent payload may use legacy anchors; a present but invalid payload must fail. Decode the
+     * flight string once, then parse the containing JSON object, not regex-selected fragments. Its
+     * declared total and every row must agree before any chapter list can reach the host.
      */
     fun parseChapterPayload(html: String, novel: Novel): List<Chapter>? {
-        val keyIndex = capitulosKeyIndex(html) ?: return null
-        val arrayStart = capitulosArrayStart(html, keyIndex) ?: return null
-        val array = readEscapedBalanced(html, arrayStart) ?: return null
-        val slug = slugBeforeKey(html, keyIndex) ?: novel.id
-        return CHAPTER_ROW.findAll(array).mapNotNull { row ->
-            val id = row.groupValues[1]
-            val number = id.toFloatOrNull() ?: return@mapNotNull null
-            Chapter(
-                sourceId = novel.sourceId,
-                novelId = novel.id,
-                id = id,
-                title = "Capítulo $id",
-                number = number,
-                url = "$SITE_BASE/novela/$slug/capitulo/$id",
+        val originalKey = capitulosKeyIndex(html) ?: return null
+        try {
+            val escaped = originalKey >= 2 && html[originalKey - 2] == '\\'
+            val payload = if (escaped) {
+                FLIGHT_STRING.findAll(html).mapNotNull { match ->
+                    val value = MatchaNovelsJson.read(html, match.range.last + 1) as? String
+                    value?.takeIf { capitulosKeyIndex(it) != null }
+                }.firstOrNull() ?: error("flight string is missing")
+            } else {
+                html
+            }
+            val key = capitulosKeyIndex(payload) ?: error("chapter key is missing")
+            val root = chapterObject(payload, key)
+            val rows = root["capitulos"] as? List<*> ?: error("capitulos is not an array")
+            val total = root["total"] as? Double ?: error("chapter total is missing or invalid")
+            check(total >= 0 && total == rows.size.toDouble()) {
+                "incomplete chapter list: expected $total rows, received ${rows.size}"
+            }
+            val slug = root["slug"] as? String ?: novel.id
+            val ids = HashSet<String>()
+            return rows.mapIndexed { index, value ->
+                val row = value as? List<*> ?: error("chapter row $index is not an array")
+                check(row.size == 5 && row[1] is String && row[2] is Boolean) {
+                    "invalid chapter row $index"
+                }
+                val id = row[0] as? String ?: error("invalid chapter id at row $index")
+                val number = id.toFloatOrNull()?.takeIf { it.isFinite() }
+                    ?: error("invalid chapter number at row $index")
+                check(ids.add(id)) { "duplicate chapter $id" }
+                Chapter(
+                    sourceId = novel.sourceId,
+                    novelId = novel.id,
+                    id = id,
+                    title = "Capítulo $id",
+                    number = number,
+                    url = "$SITE_BASE/novela/$slug/capitulo/$id",
+                )
+            }
+        } catch (failure: IllegalStateException) {
+            throw IllegalStateException(
+                "MatchaNovels: invalid chapter payload for ${novel.id}: ${failure.message}",
+                failure,
             )
-        }.toList()
+        }
+    }
+
+    /** A nested metadata object (or a brace in its string) is not the chapter object. */
+    private fun chapterObject(payload: String, key: Int): Map<*, *> {
+        var start = payload.lastIndexOf('{', key)
+        var failure: IllegalStateException? = null
+        while (start >= 0) {
+            try {
+                val value = MatchaNovelsJson.read(payload, start) as? Map<*, *>
+                if (value?.containsKey("capitulos") == true) return value
+            } catch (invalid: IllegalStateException) {
+                failure = invalid
+            }
+            start = payload.lastIndexOf('{', start - 1)
+        }
+        throw IllegalStateException("chapter object is missing or malformed", failure)
     }
 
     /**
@@ -183,7 +220,7 @@ internal object MatchaNovelsParsing {
         return chapters.values.toList()
     }
 
-    // ---- Flight-payload scanning (no parser dependency) --------------------------------------
+    // ---- Flight-payload detection --------------------------------------
 
     /** The index of the `capitulos` key, tolerating both `"capitulos"` and `\"capitulos\"`. */
     private fun capitulosKeyIndex(html: String): Int? {
@@ -199,105 +236,6 @@ internal object MatchaNovelsParsing {
             val afterQuote = skipWhitespace(html, cursor + 1)
             if (afterQuote < html.length && html[afterQuote] == ':') return index
         }
-    }
-
-    /** The index of the `[` opening the `capitulos` array that follows the key at [keyIndex]. */
-    private fun capitulosArrayStart(html: String, keyIndex: Int): Int? {
-        var cursor = keyIndex + CAPITULOS_KEY.length
-        if (cursor < html.length && html[cursor] == '\\') cursor++
-        if (cursor >= html.length || html[cursor] != '"') return null
-        cursor = skipWhitespace(html, cursor + 1)
-        if (cursor >= html.length || html[cursor] != ':') return null
-        cursor = skipWhitespace(html, cursor + 1)
-        if (cursor < html.length && html[cursor] == '\\') cursor++
-        return cursor.takeIf { it < html.length && html[it] == '[' }
-    }
-
-    /**
-     * The balanced `[`..`]` region starting at [start], tolerant of the backslash-escaped quotes the
-     * flight payload is embedded with: here `\"` is a string delimiter, and quoted regions are
-     * skipped so a bracket inside a string can never unbalance the scan.
-     */
-    private fun readEscapedBalanced(html: String, start: Int): String? {
-        var depth = 0
-        var cursor = start
-        while (cursor < html.length) {
-            when {
-                html[cursor] == '"' -> {
-                    cursor = skipEscapedString(html, cursor + 1)
-                    continue
-                }
-                html[cursor] == '\\' && cursor + 1 < html.length && html[cursor + 1] == '"' -> {
-                    cursor = skipEscapedString(html, cursor + 2)
-                    continue
-                }
-                html[cursor] == '[' -> depth++
-                html[cursor] == ']' -> {
-                    depth--
-                    if (depth == 0) return html.substring(start, cursor + 1)
-                }
-            }
-            cursor++
-        }
-        return null
-    }
-
-    /** The index just after the closing delimiter (`"` or `\"`) of the string opened before [from]. */
-    private fun skipEscapedString(html: String, from: Int): Int {
-        var cursor = from
-        while (cursor < html.length) {
-            val current = html[cursor]
-            when {
-                current == '"' -> return cursor + 1
-                current == '\\' && cursor + 1 < html.length && html[cursor + 1] == '"' -> return cursor + 2
-                current == '\\' && cursor + 1 < html.length -> cursor += 2
-                else -> cursor++
-            }
-        }
-        return html.length
-    }
-
-    /** The string value of the `slug` field that precedes the key at [before], if the payload has one. */
-    private fun slugBeforeKey(html: String, before: Int): String? {
-        var searchEnd = before
-        while (searchEnd > 0) {
-            val index = html.lastIndexOf(SLUG_KEY, searchEnd - 1)
-            if (index < 0) return null
-            searchEnd = index
-            if (index == 0 || html[index - 1] != '"') continue
-            var cursor = index + SLUG_KEY.length
-            if (cursor < html.length && html[cursor] == '\\') cursor++
-            if (cursor >= html.length || html[cursor] != '"') continue
-            cursor = skipWhitespace(html, cursor + 1)
-            if (cursor >= html.length || html[cursor] != ':') continue
-            return readEscapedString(html, skipWhitespace(html, cursor + 1))
-        }
-        return null
-    }
-
-    /** The string value (either `"..."` or `\"...\"`) starting at or after [from]; null if none. */
-    private fun readEscapedString(html: String, from: Int): String? {
-        var cursor = skipWhitespace(html, from)
-        if (cursor + 1 < html.length && html[cursor] == '\\' && html[cursor + 1] == '"') cursor++
-        if (cursor >= html.length || html[cursor] != '"') return null
-        cursor++
-        val out = StringBuilder()
-        while (cursor < html.length) {
-            val current = html[cursor]
-            when {
-                current == '"' -> return out.toString()
-                current == '\\' && cursor + 1 < html.length && html[cursor + 1] == '"' -> return out.toString()
-                current == '\\' && cursor + 1 < html.length -> {
-                    out.append(html[cursor + 1])
-                    cursor += 2
-                }
-                else -> {
-                    out.append(current)
-                    cursor++
-                }
-            }
-        }
-        return null
     }
 
     // ---- Chapter text -----------------------------------------------------------------------
@@ -545,15 +483,14 @@ internal object MatchaNovelsParsing {
 
     private fun looksLikeChapterTitle(title: String) = title.startsWith("Capítulo", ignoreCase = true)
 
+    private val FLIGHT_STRING = Regex("""self\.__next_f\.push\(\[\s*\d+\s*,\s*(?=")""")
     private val NOVEL_PATH = Regex("^/novela/([^/]+)/?$")
     private val CHAPTER_PATH = Regex("^/novela/([^/]+)/capitulo/([^/]+)/?$")
     private const val NEXT_IMAGE = "/_next/image"
 
     /** One `["<number>","<date>",...]` row of the `capitulos` array; group 1 is the chapter number. */
-    private val CHAPTER_ROW = Regex("""\[\s*\\?"([^"\\]+)\\?"\s*,""")
 
     private const val CAPITULOS_KEY = "capitulos"
-    private const val SLUG_KEY = "slug"
 
     /** The elements that are site structure rather than chapter text. */
     private const val NOISE_SELECTORS = "script, style, nav, header, footer, aside, [data-mn-anuncio]"

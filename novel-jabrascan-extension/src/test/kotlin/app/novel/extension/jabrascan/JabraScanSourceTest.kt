@@ -126,6 +126,18 @@ private val LIST_WITH_ODD_NAMES = """
 class JabraScanSourceTest {
 
     @Test
+    fun `catalogue and details preserve synopsis comparisons through the source API`() = runBlocking {
+        val page = CATALOGUE.replace(
+            "Una torre y un secreto.",
+            "<![CDATA[Si a<b y c>d. <a title='x > y' href='url'>Fin</a>.]]>",
+        )
+        val source = Harness(mapOf(CATALOGUE_URL to page)).source
+        val novel = source.popular(1).novels.single()
+        assertEquals("Si a<b y c>d. Fin.", novel.description)
+        assertEquals("Si a<b y c>d. Fin.", source.getNovelDetails(novel).description)
+    }
+
+    @Test
     fun `popular lists the catalogue and a catalogue that never pages has no next page`() = runBlocking {
         val harness = Harness(mapOf(CATALOGUE_URL to CATALOGUE))
 

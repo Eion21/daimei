@@ -478,13 +478,15 @@ class DownloadManager(
                 .mapNotNull { mangaDir.findFile(it) }
                 .firstOrNull() ?: return@withContext
 
-            var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.url)
+            val isNovelTextFile = oldDownload.isFile && oldDownload.extension == Downloader.NOVEL_CHAPTER_EXTENSION
+            val cacheName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.url)
+            var newName = cacheName
             // The extension is part of what was found, so the renamed entry has to keep it: a novel's `.txt`
             // renamed to the bare name would stop being a name `findChapterDir` asks for, and the chapter would
             // become undeletable and invisible the moment a sync changed its title
             if (oldDownload.isFile && oldDownload.extension == "cbz") {
                 newName += ".cbz"
-            } else if (oldDownload.isFile && oldDownload.extension == Downloader.NOVEL_CHAPTER_EXTENSION) {
+            } else if (isNovelTextFile) {
                 newName += ".${Downloader.NOVEL_CHAPTER_EXTENSION}"
             }
 
@@ -492,7 +494,8 @@ class DownloadManager(
 
             if (oldDownload.renameTo(newName)) {
                 cache.removeChapter(oldChapter, manga)
-                cache.addChapter(newName, mangaDir, manga)
+                // Novel text files keep their suffix on disk, while the download cache indexes the bare name.
+                cache.addChapter(if (isNovelTextFile) cacheName else newName, mangaDir, manga)
             } else {
                 logcat(LogPriority.ERROR) { "Could not rename downloaded chapter: ${oldNames.joinToString()}" }
             }

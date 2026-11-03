@@ -120,3 +120,11 @@ to owner approval, preserving existing upstream notices and valid file syntax.
 - `i18n/src/commonMain/moko-resources/es/strings.xml`
 - `settings.gradle.kts`
 - `source-local/src/main/kotlin/tachiyomi/source/local/LocalSource.kt`
+
+## S33 identity documentation and resources
+
+The S33 working changes update `README.md` and `CONTRIBUTING.md`, add
+`DAIMEI-CHANGELOG.md`, remove stale localized donation resource entries, and
+remove the inherited `app/google-services.json`. The upstream `CHANGELOG.md`,
+`LICENSE`, and `NOTICE` remain separate and unchanged. This update does not
+resolve the pending owner decision on per-file notices above.

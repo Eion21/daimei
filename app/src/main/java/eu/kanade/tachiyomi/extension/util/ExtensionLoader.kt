@@ -601,7 +601,7 @@ internal object ExtensionLoader {
      * @param pkgInfo The package info of the application.
      */
     private fun isPackageAnExtension(pkgInfo: PackageInfo): Boolean {
-        return pkgInfo.reqFeatures.orEmpty().any { isExtensionFeature(it.name) }
+        return isEligibleExtensionForDiscovery(pkgInfo.reqFeatures.orEmpty().map { it.name })
     }
 
     /**
@@ -694,6 +694,10 @@ internal fun extensionKindOf(featureNames: Collection<String>): ExtensionKind? =
  */
 internal fun isExtensionFeature(name: String?): Boolean =
     name == MANGA_EXTENSION_FEATURE || name == NOVEL_EXTENSION_FEATURE
+
+/** Feature eligibility shared by package discovery and package-name lookup. */
+internal fun isEligibleExtensionForDiscovery(featureNames: Collection<String?>): Boolean =
+    extensionKindOf(featureNames.filterNotNull()) == ExtensionKind.NOVEL
 
 /**
  * The contract version [raw] names, or null when the metadata did not carry one. Android reports an absent float

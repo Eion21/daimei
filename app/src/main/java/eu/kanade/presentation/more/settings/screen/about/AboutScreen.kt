@@ -43,14 +43,8 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import logcat.LogPriority
 import mihon.app.di.appGraph
-import mihon.icons.materialsymbols.MaterialSymbols
-import mihon.icons.materialsymbols.rounded.Public
 import mihon.icons.simpleicons.Discord
-import mihon.icons.simpleicons.Facebook
-import mihon.icons.simpleicons.Github
-import mihon.icons.simpleicons.Reddit
 import mihon.icons.simpleicons.SimpleIcons
-import mihon.icons.simpleicons.X
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.release.interactor.GetApplicationRelease
@@ -177,13 +171,6 @@ object AboutScreen : Screen() {
                 }
 
                 item {
-                    TextPreferenceWidget(
-                        title = stringResource(MR.strings.privacy_policy),
-                        onPreferenceClick = { uriHandler.openUri("") },
-                    )
-                }
-
-                item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -191,34 +178,9 @@ object AboutScreen : Screen() {
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         LinkIcon(
-                            label = stringResource(MR.strings.website),
-                            icon = MaterialSymbols.Rounded.Public,
-                            url = "",
-                        )
-                        LinkIcon(
                             label = "Discord",
                             icon = SimpleIcons.Discord,
                             url = Constants.URL_DISCORD,
-                        )
-                        LinkIcon(
-                            label = "X",
-                            icon = SimpleIcons.X,
-                            url = "",
-                        )
-                        LinkIcon(
-                            label = "Facebook",
-                            icon = SimpleIcons.Facebook,
-                            url = "",
-                        )
-                        LinkIcon(
-                            label = "Reddit",
-                            icon = SimpleIcons.Reddit,
-                            url = "",
-                        )
-                        LinkIcon(
-                            label = "GitHub",
-                            icon = SimpleIcons.Github,
-                            url = "",
                         )
                     }
                 }

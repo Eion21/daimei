@@ -47,6 +47,15 @@ import tachiyomi.i18n.MR
 import java.util.Locale
 
 /**
+ * Reject the entire legacy manga catalog protocol before it enters novel discovery. Its [entries] have no
+ * novel kind or novel API metadata, so neither a package name nor extensionLib can prove compatibility.
+ * A separately supported novel catalog consumer is required; this does not activate one or delete stores.
+ */
+internal fun novelEntriesFromLegacyMangaCatalog(
+    entries: List<Extension.Available>,
+): List<Extension.Available> = emptyList()
+
+/**
  * The manager of extensions installed as another apk which extend the available sources. It handles
  * the retrieval of remotely available extensions as well as installing, updating and removing them.
  * To avoid malicious distribution, every extension must be signed and it will only be loaded if its
@@ -243,11 +252,12 @@ class ExtensionManager(
     }
 
     private fun setAvailableExtensions(extensions: List<Extension.Available>) {
-        enableAdditionalSubLanguages(extensions)
+        val novelExtensions = novelEntriesFromLegacyMangaCatalog(extensions)
+        enableAdditionalSubLanguages(novelExtensions)
 
-        availableExtensionListFlow.value = extensions
+        availableExtensionListFlow.value = novelExtensions
         refreshStatuses()
-        setupAvailableExtensionsSourcesDataMap(extensions)
+        setupAvailableExtensionsSourcesDataMap(novelExtensions)
     }
 
     /**

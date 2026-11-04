@@ -15,6 +15,19 @@ import org.junit.jupiter.api.Test
 class JabraScanUrlsTest {
 
     @Test
+    fun `pdf host omits books prefix and folds and encodes the file`() {
+        assertEquals(
+            "https://books.jabrascan.net/Torre1/Se%C3%B1ora%2C%20por%20favor.pdf",
+            JabraScanUrls.chapterPdfUrl(
+                JabraScanUrls.BOOKS_ROOT + "/",
+                "Torre",
+                "Señora, por favor.pdf",
+                1031f,
+            ),
+        )
+    }
+
+    @Test
     fun `an ordinary real file name lands under the work's folder on the GitHub root`() {
         val url = JabraScanUrls.chapterPdfUrl(
             JabraScanUrls.PDF_REPOSITORY,

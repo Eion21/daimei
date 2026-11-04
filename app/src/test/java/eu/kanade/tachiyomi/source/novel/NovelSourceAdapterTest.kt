@@ -47,6 +47,26 @@ class NovelSourceAdapterTest {
     }
 
     @Test
+    fun `absolute cover survives popular latest search and details`() = runBlocking {
+        val cover = "https://img.jabrascan.net/IBecameMarriedMan/IBecameMarriedMan01-225w.webp"
+        val fixture = NovelSourceAdapter(FixtureSource(cover))
+        val popular = fixture.getPopularManga(1).mangas.single()
+        val latest = fixture.getLatestUpdates(1).mangas.single()
+        val search = fixture.getSearchManga(1, "Fixture", FilterList()).mangas.single()
+        val details = fixture.getMangaUpdate(popular, emptyList(), fetchDetails = true, fetchChapters = false).manga
+
+        assertTrue(fixture.supportsLatest)
+        for (manga in listOf(popular, latest, search, details)) {
+            assertEquals("novel-42", manga.url)
+            assertEquals("Fixture novel", manga.title)
+            assertEquals("Autor", manga.author)
+            assertEquals(cover, manga.thumbnail_url)
+        }
+        assertEquals(NovelMapper.generateSourceId("fixture"), fixture.id)
+        assertEquals("Fixture details", details.description)
+    }
+
+    @Test
     fun `getPopularManga on a later page returns nothing`() = runBlocking {
         assertEquals(0, adapter.getPopularManga(2).mangas.size)
     }
@@ -80,6 +100,30 @@ class NovelSourceAdapterTest {
             listOf(1f, 5f),
             listOf(update.chapters.first().chapter_number, update.chapters.last().chapter_number),
         )
+    }
+
+    @Test
+    fun `ascending source list retains chapter identity and memo through adapter`() = runBlocking {
+        val novel = Novel("ascending-fixture", "work", "Work")
+        val rows = (1..405).map {
+            NovelChapter(novel.sourceId, novel.id, "chapter-$it", "Chapter $it", number = it.toFloat())
+        }
+        val source = object : NovelSource {
+            override val info = SourceInfo(novel.sourceId, "Fixture", "1", "es")
+            override suspend fun popular(page: Int): NovelPage = error("not used")
+            override suspend fun search(query: String, page: Int): NovelPage = error("not used")
+            override suspend fun getNovelDetails(novel: Novel): Novel = error("not used")
+            override suspend fun getChapters(novel: Novel): List<NovelChapter> = rows
+            override suspend fun getChapterContent(chapter: NovelChapter): ChapterContent = error("not used")
+        }
+        val manga = eu.kanade.tachiyomi.source.model.SManga.create().apply {
+            url = novel.id
+            title = novel.title
+        }
+        val mapped = NovelSourceAdapter(source).getMangaUpdate(manga, emptyList(), false, true).chapters
+        assertEquals(rows.map { it.id }, mapped.map { it.url })
+        assertEquals(rows.map { it.number }, mapped.map { it.chapter_number })
+        assertEquals(rows.map { NovelMapper.toChapter(novel, it).memo }, mapped.map { it.memo })
     }
 
     @Test
@@ -207,13 +251,16 @@ class NovelSourceAdapterTest {
  * [DemoSource] only produces chapters that carry a number and no web url, so the adapter's handling of a
  * missing number and of a missing chapter url needs a source that exercises both.
  */
-private class FixtureSource : NovelSource {
+private class FixtureSource(private val coverUrl: String? = null) : NovelSource {
 
     override val info = sourceInfo
 
-    override suspend fun popular(page: Int) = NovelPage(listOf(novel), hasNextPage = false)
+    override suspend fun popular(page: Int) = NovelPage(listOf(novel.copy(coverUrl = coverUrl)), hasNextPage = false)
 
-    override suspend fun search(query: String, page: Int) = NovelPage(listOf(novel), hasNextPage = false)
+    override suspend fun search(query: String, page: Int) = NovelPage(
+        listOf(novel.copy(coverUrl = coverUrl)),
+        hasNextPage = false,
+    )
 
     override suspend fun getNovelDetails(novel: Novel) = novel.copy(description = "Fixture details")
 

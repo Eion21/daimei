@@ -102,6 +102,7 @@ dependencies {
     // `configureTest` in the build logic), and the bare `kotlin("test")` artifact autodetects
     // JUnit 4, which the platform runner will not pick up.
     testImplementation(libs.junit.jupiter)
+    testImplementation(libs.mockk)
     testRuntimeOnly(libs.junit.platform.launcher)
 
     // The source methods are `suspend`, so the tests drive them through `runBlocking`.

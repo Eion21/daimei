@@ -19,9 +19,8 @@ import app.novel.source.api.NovelPage
  *   catalogue taken for the whole one), a catalogue whose every obra was discarded (a library that looks
  *   as if it lost its novels), and a chapter list whose chapters sit under a key that is not the work's
  *   (they would be filed, with their progress and downloads, under the wrong novel).
- * - **Nothing here builds a URL.** `obras.xml` covers are paths relative to the library root and a
- *   chapter is addressed by the work plus the file name the list gives; the full, percent-encoded PDF
- *   address is assembled in one place, [JabraScanUrls], and only when the bytes are requested (T6).
+ * - **URL assembly belongs to [JabraScanUrls].** Catalogue cover paths are converted there for both
+ *   catalogue and details; chapter PDF addresses are assembled only when the bytes are requested (T6).
  */
 internal object JabraScanParsing {
 
@@ -218,7 +217,7 @@ internal object JabraScanParsing {
                 author = text(body, AUTHOR),
                 // The sinopsis is the prose; `meta` is the one-line fallback the same file carries.
                 description = text(body, SYNOPSIS) ?: text(body, SUMMARY),
-                coverUrl = text(body, COVER),
+                coverUrl = JabraScanUrls.coverUrl(text(body, COVER)),
             )
         }
         return CatalogueScan(obras, discarded)

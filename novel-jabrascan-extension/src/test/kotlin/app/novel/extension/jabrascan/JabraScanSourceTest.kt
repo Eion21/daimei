@@ -19,7 +19,7 @@ private const val CLAVE = "TorreDeCristal"
 
 private val CATALOGUE_URL = JabraScanUrls.CONTENT_REPOSITORY + "/obras.xml"
 private val INDEX_URL = JabraScanUrls.CONTENT_REPOSITORY + "/capitulos.json"
-private val LIST_URL = JabraScanUrls.PDF_REPOSITORY + "/books/$CLAVE.json"
+private val LIST_URL = JabraScanUrls.CONTENT_REPOSITORY + "/books/$CLAVE.json"
 
 /** The two file names the mixed lists use, one per root. */
 private val FILES = listOf("$CLAVE-0001.0v01.pdf", "$CLAVE-0002.0v01.pdf")
@@ -196,7 +196,7 @@ class JabraScanSourceTest {
         assertEquals(FILES.map { "$CLAVE/$it" }, onRepository.map { it.id })
 
         // The roots differ and the address each builds differs with them, while the chapter does not move.
-        val repositoryRoot = JabraScanUrls.chapterPdfUrl(JabraScanUrls.PDF_REPOSITORY, CLAVE, FILES[0], 1f)
+        val repositoryRoot = JabraScanUrls.chapterPdfUrl(JabraScanUrls.BOOKS_ROOT, CLAVE, FILES[0], 1f)
         val siteRoot = JabraScanUrls.chapterPdfUrl(JabraScanUrls.SITE, CLAVE, FILES[0], 1f)
         assertNotEquals(repositoryRoot, siteRoot)
         assertEquals(FILES[0], onRepository[0].url)
@@ -214,7 +214,7 @@ class JabraScanSourceTest {
 
         assertEquals(
             listOf(
-                "${JabraScanUrls.PDF_REPOSITORY}/books/$CLAVE/${FILES[0]}",
+                "${JabraScanUrls.BOOKS_ROOT}/$CLAVE/${FILES[0]}",
                 "${JabraScanUrls.SITE}/books/$CLAVE/${FILES[1]}",
             ),
             harness.network.byteFetches.toList(),
@@ -229,7 +229,7 @@ class JabraScanSourceTest {
         harness.source.getChapterContent(chapters[0])
 
         assertEquals(
-            listOf("${JabraScanUrls.PDF_REPOSITORY}/books/$CLAVE/${FILES[0]}"),
+            listOf("${JabraScanUrls.BOOKS_ROOT}/$CLAVE/${FILES[0]}"),
             harness.network.byteFetches.toList(),
         )
     }
@@ -290,7 +290,7 @@ class JabraScanSourceTest {
 
         assertEquals(
             setOf(
-                "${JabraScanUrls.PDF_REPOSITORY}/books/$CLAVE/${FILES[0]}",
+                "${JabraScanUrls.BOOKS_ROOT}/$CLAVE/${FILES[0]}",
                 "${JabraScanUrls.SITE}/books/$CLAVE/${FILES[1]}",
             ),
             harness.network.byteFetches.toSet(),

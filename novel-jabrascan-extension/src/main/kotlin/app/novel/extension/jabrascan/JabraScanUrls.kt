@@ -7,10 +7,9 @@ package app.novel.extension.jabrascan
  *
  * - **the content repository** ([CONTENT_REPOSITORY]) is JabraScan's own GitHub Pages repository
  *   (`JabraScan/JabraScan.github.io`), served through `raw.githubusercontent.com`. Its `main` branch carries
- *   the catalogue `obras.xml` and the chapter index `capitulos.json`;
- * - **the PDF repository** ([PDF_REPOSITORY]) is the site's separate `JabraScan.github.io-pdfs` repository,
- *   again through `raw.githubusercontent.com`. It carries each work's chapter list `books/{clave}.json` and
- *   the chapter PDFs of every row whose `server` is absent or says `io-pdfs`;
+ *   the catalogue `obras.xml`, the chapter index `capitulos.json`, and chapter lists `books/{clave}.json`;
+ * - **the PDF host** ([BOOKS_ROOT], `https://books.jabrascan.net`) serves PDFs whose `server` is absent
+ *   or says `io-pdfs`, directly under the work folder without a `/books` prefix;
  * - **the site itself** ([SITE], `https://jabrascan.net`) serves the chapter PDFs of the rows whose `server`
  *   says `local`.
  *
@@ -27,14 +26,28 @@ package app.novel.extension.jabrascan
  */
 internal object JabraScanUrls {
 
-    /** The GitHub repository holding the catalogue `obras.xml` and the index `capitulos.json`. */
+    /** The GitHub repository holding the catalogue, index, and chapter lists. */
     const val CONTENT_REPOSITORY: String = "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io/main"
 
-    /** The GitHub repository holding the chapter lists and most chapter PDFs. */
+    /** Legacy root retained for callers that build the historical `/books` address. */
     const val PDF_REPOSITORY: String = "https://raw.githubusercontent.com/JabraScan/JabraScan.github.io-pdfs/main"
+
+    /** The PDF host used for absent and `io-pdfs` server values. */
+    const val BOOKS_ROOT: String = "https://books.jabrascan.net"
 
     /** The site itself, which serves the works whose rows carry `"server": "local"`. */
     const val SITE: String = "https://jabrascan.net"
+
+    /** The site's responsive cover URL for a catalogue image path. */
+    fun coverUrl(image: String?): String? {
+        val path = image?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        if (path.startsWith("http://", ignoreCase = true) || path.startsWith("https://", ignoreCase = true)) {
+            return path
+        }
+        val stem = path.replace(Regex("\\.(jpg|jpeg|png|webp|avif)$", RegexOption.IGNORE_CASE), "")
+        return "https://img.jabrascan.net/" + stem.split('/').joinToString("/", transform = ::encodePathSegment) +
+            "-225w.webp"
+    }
 
     /** The last chapter number the site keeps under the bare clave folder. */
     private const val LAST_UNFOLDED_CHAPTER = 999f
@@ -43,12 +56,14 @@ internal object JabraScanUrls {
     private const val FOLDED_DIGITS = 3
 
     /**
-     * `{root}/books/{folder}/{fileName}`, with [fileName] percent-encoded as a single path segment and the
-     * folder folded from [number] the way the site folds it.
+     * `{root}/{folder}/{fileName}` for the PDF host, or `{root}/books/{folder}/{fileName}` for other
+     * roots. The file is encoded as one segment and the folder is folded from [number].
      */
-    fun chapterPdfUrl(repositoryRoot: String, clave: String, fileName: String, number: Float?): String =
-        repositoryRoot.trimEnd('/') + "/books/" + encodePathSegment(foldedClave(clave, number)) + "/" +
-            encodePathSegment(fileName)
+    fun chapterPdfUrl(repositoryRoot: String, clave: String, fileName: String, number: Float?): String {
+        val root = repositoryRoot.trimEnd('/')
+        val prefix = if (root == BOOKS_ROOT) "/" else "/books/"
+        return root + prefix + encodePathSegment(foldedClave(clave, number)) + "/" + encodePathSegment(fileName)
+    }
 
     /**
      * The site's folder for a work: the clave, plus — for a chapter numbered past 999 — the leading digits

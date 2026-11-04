@@ -126,6 +126,19 @@ internal object JabraScanPdf {
         scratchDir: File? = null,
     ): ParagraphReconstruction {
         if (bytes.isEmpty()) return ParagraphReconstruction(emptyList(), 0f, statisticUnreliable = false)
+        return withLoadedPdf(bytes, limits, scratchDir) { document ->
+            val lines = PdfLineStripper(limits).apply { sortByPosition = true }.linesFrom(document)
+            JabraScanPdfLayout.reconstruct(lines)
+        }
+    }
+
+    /** Loads and closes a non-empty document around its read, preserving the extraction guards. */
+    internal fun <T> withLoadedPdf(
+        bytes: ByteArray,
+        limits: JabraScanPdfLimits,
+        scratchDir: File?,
+        read: (PDDocument) -> T,
+    ): T {
         limits.checkInput(bytes.size)
         val memory = MemoryUsageSetting.setupMixed(limits.scratchMainBytes, limits.scratchTotalBytes)
         if (scratchDir != null) memory.setTempDir(scratchDir)
@@ -133,8 +146,7 @@ internal object JabraScanPdf {
             return bytes.inputStream().use { input ->
                 PDDocument.load(input, memory).use { document ->
                     limits.checkPages(document.numberOfPages)
-                    val lines = PdfLineStripper(limits).apply { sortByPosition = true }.linesFrom(document)
-                    JabraScanPdfLayout.reconstruct(lines)
+                    read(document)
                 }
             }
         } catch (e: IOException) {

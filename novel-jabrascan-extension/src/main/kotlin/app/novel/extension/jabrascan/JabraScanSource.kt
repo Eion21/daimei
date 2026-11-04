@@ -21,7 +21,7 @@ private const val TAG = "JabraScanSource"
 /** The one catalogue page: the library is one file, so it never pages. */
 private const val FIRST_PAGE = 1
 
-/** The `server` value whose rows live on the PDF repository, the same root an absent server implies. */
+/** The `server` value whose rows live on the PDF host, the same root an absent server implies. */
 private const val IO_PDFS = "io-pdfs"
 
 /** The `server` value whose rows live on the site itself. */
@@ -46,7 +46,7 @@ private const val LOCAL = "local"
  *   only when the bytes are requested.
  * - **The root is chosen per row.** The `server` field is read from each chapter row — `CDMNQTMHC` and
  *   `CultivationOnline` mix `local` rows with repository rows in one work — and an absent field or
- *   `io-pdfs` means the PDF repository while `local` means the site. The per-file map is filled while
+ *   `io-pdfs` means the PDF host while `local` means the site. The per-file map is filled while
  *   [getChapters] reads the list and kept in a [ConcurrentHashMap], because chapters download
  *   concurrently; a download in a fresh process whose list was never read refetches `books/{clave}.json`
  *   once to fill it. An unknown `server` keeps the row (dropping it would make the host delete the
@@ -138,7 +138,7 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
      *
      * The index (`capitulos.json`) is the site's own map from a clave to its chapter list, so it decides
      * which path is read and a work the index does not carry is simply a work with no chapters. The list
-     * is joined against the PDF repository — the index's paths are relative to it — and both halves of
+     * is joined against the content repository — the index's paths are relative to it — and both halves of
      * [JabraScanParsing.parseChapterListReport] are put to use: the chapters are returned and the servers
      * are kept for the downloads that follow.
      */
@@ -146,7 +146,7 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
         val index = JabraScanParsing.parseChapterIndex(network.fetch(indexUrl()))
         val path = index[novel.id] ?: return emptyList()
         val list = JabraScanParsing.parseChapterListReport(
-            network.fetch(join(JabraScanUrls.PDF_REPOSITORY, path)),
+            network.fetch(join(JabraScanUrls.CONTENT_REPOSITORY, path)),
             novel,
         )
         serversByWork[novel.id] = list.servers
@@ -156,7 +156,7 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
     /**
      * The chapter's prose, extracted from its PDF.
      *
-     * The root comes from the row's `server` alone: absent or `io-pdfs` is the PDF repository, `local` is
+     * The root comes from the row's `server` alone: absent or `io-pdfs` is the PDF host, `local` is
      * the site, and anything else has no root and fails here — before the download and before anything
      * touches PdfBox — naming the offending value and the work. A row with no known root is never
      * silently pointed at a default, because the wrong root is a 404 the reader cannot diagnose.
@@ -176,10 +176,11 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
                     "the row is kept, but there is no default root to download it from",
             )
         val bytes = network.fetchBytes(JabraScanUrls.chapterPdfUrl(root, work, file, chapter.number))
+        // Package context supplies PDF fonts, not writable storage for the host process.
+        // Keep PDFBox's bounded scratch on the process-default temporary directory.
         val paragraphs = JabraScanPdf.extract(
             bytes,
             ChapterIdentity(work = work, chapter = chapter.title),
-            scratchDir = if (this::context.isInitialized) context.cacheDir else null,
         )
         return ChapterContent(paragraphs)
     }
@@ -206,14 +207,14 @@ class JabraScanSource : NetworkedNovelSource, ContextAwareNovelSource {
      * maps every clave to — so filling the map costs one request and not a second one for the index.
      */
     private suspend fun loadServers(work: String): Map<String, String?> {
-        val json = network.fetch(join(JabraScanUrls.PDF_REPOSITORY, "books/$work.json"))
+        val json = network.fetch(join(JabraScanUrls.CONTENT_REPOSITORY, "books/$work.json"))
         val list = JabraScanParsing.parseChapterListReport(json, Novel(JabraScanParsing.SOURCE_ID, work, work))
         return list.servers
     }
 
     /** The root a row's `server` names, or `null` when it names none: no default is ever substituted. */
     private fun rootFor(server: String?): String? = when (server) {
-        null, IO_PDFS -> JabraScanUrls.PDF_REPOSITORY
+        null, IO_PDFS -> JabraScanUrls.BOOKS_ROOT
         LOCAL -> JabraScanUrls.SITE
         else -> null
     }

@@ -34,7 +34,7 @@ class JabraScanParsingTest {
         assertEquals("La torre de cristal", novel.title)
         assertEquals("Autor Uno", novel.author)
         assertEquals("Una torre, un secreto. Blog Y una segunda línea.", novel.description)
-        assertEquals("TorreDeCristal/TorreDeCristal01.webp", novel.coverUrl)
+        assertEquals("https://img.jabrascan.net/TorreDeCristal/TorreDeCristal01-225w.webp", novel.coverUrl)
     }
 
     @Test
@@ -128,7 +128,7 @@ class JabraScanParsingTest {
         assertEquals("Obra oculta", details.title)
         assertEquals("Autor Dos", details.author)
         assertEquals("Sinopsis de la obra oculta.", details.description)
-        assertEquals("ObraOculta/ObraOculta01.webp", details.coverUrl)
+        assertEquals("https://img.jabrascan.net/ObraOculta/ObraOculta01-225w.webp", details.coverUrl)
     }
 
     @Test

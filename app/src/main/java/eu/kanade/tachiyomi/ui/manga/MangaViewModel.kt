@@ -44,8 +44,10 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.novel.isNovelSource
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
+import eu.kanade.tachiyomi.util.chapter.novelNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
@@ -693,6 +695,9 @@ class MangaViewModel(
      */
     fun getNextUnreadChapter(): Chapter? {
         val successState = successState ?: return null
+        if (successState.source.isNovelSource()) {
+            return novelNextUnread(successState.chapters, successState.manga)
+        }
         return successState.chapters.getNextUnread(successState.manga)
     }
 

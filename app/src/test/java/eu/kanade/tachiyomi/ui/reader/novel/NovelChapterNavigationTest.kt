@@ -13,11 +13,13 @@ import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import eu.kanade.tachiyomi.source.novel.UNRECOGNIZED_NUMBER
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.function.Executable
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -32,7 +34,7 @@ class NovelChapterNavigationTest {
         mangaId = manga.id,
         name = "Chapter $id",
         chapterNumber = number,
-        sourceOrder = 100 - id,
+        sourceOrder = id - 1,
         scanlator = "A",
     )
 
@@ -107,7 +109,8 @@ class NovelChapterNavigationTest {
         val prefs = NovelNavigationPreferences(skipDuplicates = true)
         assertPlan(
             resolveNovelChapterNavigation(manga, listOf(third, otherScanlator, second, first), first, prefs),
-            listOf(1, 2, 3), second,
+            listOf(1, 2, 3),
+            second,
         )
     }
 
@@ -116,10 +119,13 @@ class NovelChapterNavigationTest {
         val duplicate = chapter(11, 1.0).copy(sourceOrder = first.sourceOrder)
         assertPlan(
             resolveNovelChapterNavigation(
-                manga, listOf(third, second, duplicate, first), first,
+                manga,
+                listOf(third, second, duplicate, first),
+                first,
                 NovelNavigationPreferences(skipDuplicates = true),
             ),
-            listOf(1, 2, 3), second,
+            listOf(1, 2, 3),
+            second,
         )
     }
 
@@ -127,10 +133,15 @@ class NovelChapterNavigationTest {
     fun `downloaded only skips an undownloaded destination but retains an undownloaded anchor`() {
         assertPlan(
             resolveNovelChapterNavigation(
-                manga, listOf(third, second, first), first,
-                NovelNavigationPreferences(downloadedOnly = true), setOf(third.id),
+                manga,
+                listOf(third, second, first),
+                first,
+                NovelNavigationPreferences(downloadedOnly = true),
+                setOf(third.id),
             ),
-            listOf(1, 2, 3), third, downloadedOnly = true,
+            listOf(1, 2, 3),
+            third,
+            downloadedOnly = true,
         )
     }
 
@@ -138,18 +149,27 @@ class NovelChapterNavigationTest {
     fun `no downloaded destination after the anchor has no button and a distinct footer status`() {
         assertPlan(
             resolveNovelChapterNavigation(
-                manga, listOf(third, second, first), second,
-                NovelNavigationPreferences(downloadedOnly = true), setOf(first.id, second.id),
+                manga,
+                listOf(third, second, first),
+                second,
+                NovelNavigationPreferences(downloadedOnly = true),
+                setOf(first.id, second.id),
             ),
-            listOf(1, 2, 3), null, NovelNavigationStatus.NO_MORE_DOWNLOADED, downloadedOnly = true,
+            listOf(1, 2, 3),
+            null,
+            NovelNavigationStatus.NO_MORE_DOWNLOADED,
+            downloadedOnly = true,
         )
     }
 
     @Test
     fun `undownloaded current with nothing downloaded retains its reference and never offers itself`() {
         val plan = resolveNovelChapterNavigation(
-            manga, listOf(third, second, first), second,
-            NovelNavigationPreferences(downloadedOnly = true), emptySet(),
+            manga,
+            listOf(third, second, first),
+            second,
+            NovelNavigationPreferences(downloadedOnly = true),
+            emptySet(),
         )
         assertPlan(plan, listOf(1, 2, 3), null, NovelNavigationStatus.NO_MORE_DOWNLOADED, downloadedOnly = true)
         assertEquals(second, plan.chapters.single { it.id == second.id })
@@ -159,10 +179,14 @@ class NovelChapterNavigationTest {
     fun `disabled downloaded only offers the immediate successor despite a download hole`() {
         assertPlan(
             resolveNovelChapterNavigation(
-                manga, listOf(third, second, first), first,
-                NovelNavigationPreferences(downloadedOnly = false), setOf(third.id),
+                manga,
+                listOf(third, second, first),
+                first,
+                NovelNavigationPreferences(downloadedOnly = false),
+                setOf(third.id),
             ),
-            listOf(1, 2, 3), second,
+            listOf(1, 2, 3),
+            second,
         )
     }
 
@@ -171,10 +195,13 @@ class NovelChapterNavigationTest {
         val current = first.copy(read = true)
         assertPlan(
             resolveNovelChapterNavigation(
-                manga, listOf(third, second.copy(read = true), current), current,
+                manga,
+                listOf(third, second.copy(read = true), current),
+                current,
                 NovelNavigationPreferences(skipRead = true),
             ),
-            listOf(1, 3), third,
+            listOf(1, 3),
+            third,
         )
     }
 
@@ -184,9 +211,13 @@ class NovelChapterNavigationTest {
         val bookmarked = third.copy(bookmark = true)
         assertPlan(
             resolveNovelChapterNavigation(
-                work, listOf(bookmarked, second, first), first, NovelNavigationPreferences(skipFiltered = true),
+                work,
+                listOf(bookmarked, second, first),
+                first,
+                NovelNavigationPreferences(skipFiltered = true),
             ),
-            listOf(1, 3), bookmarked,
+            listOf(1, 3),
+            bookmarked,
         )
     }
 
@@ -196,9 +227,13 @@ class NovelChapterNavigationTest {
         val read = third.copy(read = true)
         assertPlan(
             resolveNovelChapterNavigation(
-                work, listOf(read, second, first), first, NovelNavigationPreferences(skipFiltered = true),
+                work,
+                listOf(read, second, first),
+                first,
+                NovelNavigationPreferences(skipFiltered = true),
             ),
-            listOf(1, 3), read,
+            listOf(1, 3),
+            read,
         )
     }
 
@@ -207,10 +242,14 @@ class NovelChapterNavigationTest {
         val work = manga.copy(chapterFlags = Manga.CHAPTER_SHOW_DOWNLOADED)
         assertPlan(
             resolveNovelChapterNavigation(
-                work, listOf(third, second, first), first,
-                NovelNavigationPreferences(skipFiltered = true), setOf(third.id),
+                work,
+                listOf(third, second, first),
+                first,
+                NovelNavigationPreferences(skipFiltered = true),
+                setOf(third.id),
             ),
-            listOf(1, 3), third,
+            listOf(1, 3),
+            third,
         )
     }
 
@@ -242,8 +281,12 @@ class NovelChapterNavigationTest {
         val rows = listOf(third, second, first).map { it.copy(chapterNumber = UNRECOGNIZED_NUMBER.toDouble()) }
         val current = rows.last()
         assertUnchangedPlan(
-            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE), rows, current,
-            NovelNavigationPreferences(skipDuplicates = true), ids = listOf(1, 2, 3), next = rows[1],
+            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE),
+            rows,
+            current,
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(1, 2, 3),
+            next = rows[1],
         )
     }
 
@@ -254,8 +297,12 @@ class NovelChapterNavigationTest {
         // numerically. ChapterSort orders -1 first. Like the original unknown-candidate guard, refuse
         // to infer its intended numeric position while an eligible unknown remains; NEVER use SOURCE.
         assertUnchangedPlan(
-            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_NUMBER), listOf(third, unknown, first), first,
-            NovelNavigationPreferences(skipDuplicates = true), ids = listOf(2, 1, 3), next = null,
+            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_NUMBER),
+            listOf(third, unknown, first),
+            first,
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(2, 1, 3),
+            next = null,
             status = NovelNavigationStatus.UNKNOWN_NUMBER,
         )
     }
@@ -265,8 +312,12 @@ class NovelChapterNavigationTest {
         val current = first.copy(chapterNumber = 0.0)
         val duplicate = second.copy(chapterNumber = 0.0)
         assertUnchangedPlan(
-            manga, listOf(third, duplicate, current), current, NovelNavigationPreferences(skipDuplicates = true),
-            ids = listOf(1, 3), next = third,
+            manga,
+            listOf(third, duplicate, current),
+            current,
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(1, 3),
+            next = third,
         )
     }
 
@@ -277,8 +328,12 @@ class NovelChapterNavigationTest {
         val duplicate12 = second.copy(chapterNumber = 12.0)
         val chapter13 = third.copy(chapterNumber = 13.0)
         assertUnchangedPlan(
-            manga, listOf(chapter13, duplicate12, current12), current12, prefs,
-            ids = listOf(1, 3), next = chapter13,
+            manga,
+            listOf(chapter13, duplicate12, current12),
+            current12,
+            prefs,
+            ids = listOf(1, 3),
+            next = chapter13,
         )
 
         val current11 = first.copy(chapterNumber = 11.0)
@@ -287,15 +342,23 @@ class NovelChapterNavigationTest {
         // S32 accepted loss: 12-B is hidden from navigation when 12-A matches current11-A.
         // These may be distinct PARTS on some sources; OFF must preserve both (separate control below).
         assertUnchangedPlan(
-            manga, listOf(chapter13, other12, matching12, current11), current11, prefs,
-            ids = listOf(1, 2, 3), next = matching12,
+            manga,
+            listOf(chapter13, other12, matching12, current11),
+            current11,
+            prefs,
+            ids = listOf(1, 2, 3),
+            next = matching12,
         )
 
         val first12 = matching12.copy(scanlator = "B")
         val later12 = other12.copy(scanlator = "C")
         assertUnchangedPlan(
-            manga, listOf(chapter13, first12, later12, current11), current11, prefs,
-            ids = listOf(1, 2, 3), next = first12,
+            manga,
+            listOf(chapter13, first12, later12, current11),
+            current11,
+            prefs,
+            ids = listOf(1, 2, 3),
+            next = first12,
         )
     }
 
@@ -304,9 +367,13 @@ class NovelChapterNavigationTest {
         val current = first.copy(chapterNumber = UNRECOGNIZED_NUMBER.toDouble())
         val unknown = second.copy(chapterNumber = UNRECOGNIZED_NUMBER.toDouble())
         assertUnchangedPlan(
-            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE), listOf(third, unknown, current), current,
-            NovelNavigationPreferences(skipDuplicates = true, downloadedOnly = true), setOf(third.id),
-            ids = listOf(1, 2, 3), next = third,
+            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE),
+            listOf(third, unknown, current),
+            current,
+            NovelNavigationPreferences(skipDuplicates = true, downloadedOnly = true),
+            setOf(third.id),
+            ids = listOf(1, 2, 3),
+            next = third,
         )
     }
 
@@ -317,12 +384,20 @@ class NovelChapterNavigationTest {
         val partA = third.copy(chapterNumber = 12.0)
         val partB = chapter(4, 12.0).copy(scanlator = "B")
         assertUnchangedPlan(
-            manga, listOf(partB, partA, unknown, current), current,
-            NovelNavigationPreferences(skipDuplicates = false), ids = listOf(1, 2, 3, 4), next = unknown,
+            manga,
+            listOf(partB, partA, unknown, current),
+            current,
+            NovelNavigationPreferences(skipDuplicates = false),
+            ids = listOf(1, 2, 3, 4),
+            next = unknown,
         )
         assertUnchangedPlan(
-            manga, listOf(partB, partA, unknown, current), partA,
-            NovelNavigationPreferences(skipDuplicates = false), ids = listOf(1, 2, 3, 4), next = partB,
+            manga,
+            listOf(partB, partA, unknown, current),
+            partA,
+            NovelNavigationPreferences(skipDuplicates = false),
+            ids = listOf(1, 2, 3, 4),
+            next = partB,
         )
     }
 
@@ -371,12 +446,20 @@ class NovelChapterNavigationTest {
         // A different literal in the helper's recognition predicate must fail BEHAVIOR here:
         // both real mapped missing-number chapters are supplied, so erroneous grouping loses one.
         assertUnchangedPlan(
-            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE), domain, domain.first(),
-            NovelNavigationPreferences(skipDuplicates = true), ids = listOf(1, 2), next = domain[1],
+            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE),
+            domain,
+            domain.first(),
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(1, 2),
+            next = domain[1],
         )
         assertUnchangedPlan(
-            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_NUMBER), domain, domain.first(),
-            NovelNavigationPreferences(skipDuplicates = true), ids = listOf(1, 2), next = null,
+            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_NUMBER),
+            domain,
+            domain.first(),
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(1, 2),
+            next = null,
             status = NovelNavigationStatus.UNKNOWN_NUMBER,
         )
     }
@@ -420,18 +503,107 @@ class NovelChapterNavigationTest {
         )
         val mapped = mapThroughPublicAdapter(rows, novel)
         assertEquals(listOf(-1f, 1f, 2f, 3f), mapped.map { it.chapter_number })
-        println("S32_HTTP parsed=${rows.size} sourceMissing=${rows.count { it.number == null }} " +
-            "mappedUnknown=${mapped.count { it.chapter_number == UNRECOGNIZED_NUMBER }}")
+        println(
+            "S32_HTTP parsed=${rows.size} sourceMissing=${rows.count { it.number == null }} " +
+                "mappedUnknown=${mapped.count { it.chapter_number == UNRECOGNIZED_NUMBER }}",
+        )
         val domain = mapped.mapIndexed { index, remote -> chapter(index + 1L).copyFromSChapter(remote) }
         assertUnchangedPlan(
-            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE), domain, domain.first(),
-            NovelNavigationPreferences(skipDuplicates = true), ids = listOf(1, 2, 3, 4), next = domain[1],
+            manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE),
+            domain,
+            domain.first(),
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(1, 2, 3, 4),
+            next = domain[1],
         )
         assertEquals(before, rows)
     }
 
+    @Test
+    fun s37AscendingSourceIndicesAdvanceInBothDisplayDirections() {
+        val rows = (1L..405L).map { chapter(it).copy(sourceOrder = it - 1) }
+        val checks = listOf(Manga.CHAPTER_SORT_ASC, Manga.CHAPTER_SORT_DESC).flatMap { direction ->
+            val work = manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE or direction)
+            listOf(1 to 2, 2 to 3, 404 to 405).map { (current, expected) ->
+                Executable {
+                    val plan = resolveNovelChapterNavigation(work, rows, rows[current - 1])
+                    assertEquals(expected.toLong(), plan.next?.id, "direction=$direction current=$current")
+                    assertEquals(NovelNavigationStatus.NEXT, plan.status)
+                }
+            } + Executable {
+                val last = resolveNovelChapterNavigation(work, rows, rows.last())
+                assertNull(last.next, "direction=$direction")
+                assertEquals(NovelNavigationStatus.LAST_CHAPTER, last.status)
+            }
+        }
+        assertAll(checks)
+    }
+
+    @Test
+    fun s37AscendingSourceKeepsDecimalsUnknownsAndDuplicateNumbers() {
+        val rows = listOf(
+            chapter(1, 1.0),
+            chapter(2, 1.5),
+            chapter(3, -1.0),
+            chapter(4, 2.0),
+            chapter(5, 2.0),
+        )
+        val work = manga.copy(chapterFlags = Manga.CHAPTER_SORTING_SOURCE)
+        assertUnchangedPlan(
+            work,
+            rows,
+            rows[1],
+            NovelNavigationPreferences(),
+            ids = listOf(1, 2, 3, 4, 5),
+            next = rows[2],
+        )
+        assertUnchangedPlan(
+            work,
+            rows,
+            rows[2],
+            NovelNavigationPreferences(),
+            ids = listOf(1, 2, 3, 4, 5),
+            next = rows[3],
+        )
+        assertUnchangedPlan(
+            work,
+            rows,
+            rows[3],
+            NovelNavigationPreferences(),
+            ids = listOf(1, 2, 3, 4, 5),
+            next = rows[4],
+        )
+        assertUnchangedPlan(
+            work,
+            rows,
+            rows[2],
+            NovelNavigationPreferences(skipDuplicates = true),
+            ids = listOf(1, 2, 3, 4),
+            next = rows[3],
+        )
+    }
+
+    @Test
+    fun s37DuplicateAnchorIdIsNeverItsOwnNext() {
+        val rows = listOf(chapter(1), chapter(1).copy(sourceOrder = 1), chapter(2).copy(sourceOrder = 2))
+        val plan = resolveNovelChapterNavigation(manga, rows, rows.first())
+        assertEquals(listOf(1L, 1L, 2L), plan.chapters.map { it.id })
+        assertEquals(2L, plan.next?.id)
+    }
+
+    @Test
+    fun s37NumericSortKeepsExistingNonfiniteComparatorBehavior() {
+        val rows = listOf(chapter(1, Double.NaN), chapter(2, Double.POSITIVE_INFINITY), chapter(3, 1.5))
+        val work = manga.copy(chapterFlags = Manga.CHAPTER_SORTING_NUMBER)
+        assertUnchangedPlan(work, rows, rows[2], NovelNavigationPreferences(), ids = listOf(3, 2, 1), next = rows[1])
+    }
+
     private fun sourceChapter(id: String, number: Float?) = SourceChapter(
-        "policy-fixture", "work", id, "Fixture $id", number = number,
+        "policy-fixture",
+        "work",
+        id,
+        "Fixture $id",
+        number = number,
     )
 
     private fun mapThroughPublicAdapter(
@@ -454,7 +626,10 @@ class NovelChapterNavigationTest {
             title = novel.title
         }
         NovelSourceAdapter(source).getMangaUpdate(
-            remote, emptyList(), fetchDetails = false, fetchChapters = true,
+            remote,
+            emptyList(),
+            fetchDetails = false,
+            fetchChapters = true,
         ).chapters
     }
 
@@ -467,7 +642,13 @@ class NovelChapterNavigationTest {
         downloads: Set<Long> = emptySet(),
         ids: List<Long>,
         next: Chapter?,
-        status: NovelNavigationStatus = if (next == null) NovelNavigationStatus.LAST_CHAPTER else NovelNavigationStatus.NEXT,
+        status: NovelNavigationStatus = if (next ==
+            null
+        ) {
+            NovelNavigationStatus.LAST_CHAPTER
+        } else {
+            NovelNavigationStatus.NEXT
+        },
     ) {
         val workBefore = work.copy()
         val rowsBefore = rows.map { it.copy() }
@@ -477,7 +658,10 @@ class NovelChapterNavigationTest {
         try {
             assertPlan(
                 resolveNovelChapterNavigation(work, rows, current, prefs, downloads),
-                ids, next, status, prefs.downloadedOnly,
+                ids,
+                next,
+                status,
+                prefs.downloadedOnly,
             )
         } finally {
             assertEquals(workBefore, work, "Planning must not mutate the work")

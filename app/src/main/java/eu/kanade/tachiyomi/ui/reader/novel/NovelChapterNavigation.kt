@@ -1,9 +1,9 @@
 package eu.kanade.tachiyomi.ui.reader.novel
 
 import eu.kanade.tachiyomi.source.novel.UNRECOGNIZED_NUMBER
+import eu.kanade.tachiyomi.util.chapter.novelChapterReadingOrder
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.manga.model.Manga
 
 /** Reader preferences, sampled by the host; planning navigation performs no IO or writes. */
@@ -53,16 +53,22 @@ internal fun resolveNovelChapterNavigation(
     val eligible = anchored.filter { chapter ->
         chapter.id == current.id || !(
             (preferences.skipRead && chapter.read) ||
-                (preferences.skipFiltered && (
-                    (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_READ && !chapter.read) ||
-                        (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_UNREAD && chapter.read) ||
-                        (manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_DOWNLOADED &&
-                            chapter.id !in downloadedChapterIds) ||
-                        (manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_NOT_DOWNLOADED &&
-                            chapter.id in downloadedChapterIds) ||
-                        (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_BOOKMARKED && !chapter.bookmark) ||
-                        (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_NOT_BOOKMARKED && chapter.bookmark)
-                    ))
+                (
+                    preferences.skipFiltered && (
+                        (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_READ && !chapter.read) ||
+                            (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_UNREAD && chapter.read) ||
+                            (
+                                manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_DOWNLOADED &&
+                                    chapter.id !in downloadedChapterIds
+                                ) ||
+                            (
+                                manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_NOT_DOWNLOADED &&
+                                    chapter.id in downloadedChapterIds
+                                ) ||
+                            (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_BOOKMARKED && !chapter.bookmark) ||
+                            (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_NOT_BOOKMARKED && chapter.bookmark)
+                        )
+                    )
             )
     }
 
@@ -78,10 +84,10 @@ internal fun resolveNovelChapterNavigation(
         eligible
     }
 
-    // ReaderViewModel.kt:281: use the work's comparator, always sortDescending=false.
+    // Novel SOURCE follows ascending source indices; other modes retain the reader's ascending comparator.
     // Approved S29 stage difference: novel dedup is BEFORE sort; image sorts before dedup.
     // This preserves the first INPUT representative when neither current nor scanlator matches.
-    val ordered = deduplicated.sortedWith(getChapterSort(manga, sortDescending = false))
+    val ordered = deduplicated.sortedWith(novelChapterReadingOrder(manga))
 
     // S31 novel safeguard, NOT image behavior: a sentinel sorts before recognized numbers, but
     // that does not prove it precedes the anchor. Any eligible unknown makes numeric order unsafe.

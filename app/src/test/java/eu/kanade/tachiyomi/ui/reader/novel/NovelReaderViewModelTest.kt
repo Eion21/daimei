@@ -930,6 +930,7 @@ class NovelReaderViewModelTest {
         val tracker = mockk<TrackChapter>()
         val downloads = mockk<DownloadManager>(relaxed = true)
         val readerPrefs = ReaderPreferences(InMemoryPreferenceStore())
+
         // Stub only the dependency's preference handle, avoiding Android installer/GLES initialization.
         // This is an isolated in-memory fixture key, never an installed app preference.
         val basePrefs = mockk<BasePreferences> {
@@ -1012,9 +1013,9 @@ class NovelReaderViewModelTest {
     }
 
     private fun transitionRows() = listOf(
-        chapter(THIRD_ID, chapterNumber = 7.0).copy(name = "Chapter 7", sourceOrder = 1),
-        chapter(NEXT_ID, chapterNumber = 6.0).copy(name = "Chapter 6", sourceOrder = 2),
-        chapter(CHAPTER_ID).copy(name = "Chapter 5", sourceOrder = 3),
+        chapter(THIRD_ID, chapterNumber = 7.0).copy(name = "Chapter 7", sourceOrder = 2),
+        chapter(NEXT_ID, chapterNumber = 6.0).copy(name = "Chapter 6", sourceOrder = 1),
+        chapter(CHAPTER_ID).copy(name = "Chapter 5", sourceOrder = 0),
     )
 
     private fun transitionTest(body: suspend TestScope.() -> Unit) = runTest {
@@ -1096,7 +1097,10 @@ class NovelReaderViewModelTest {
         }
         vm.saveProgress(CHAPTER_ID, f.oldPosition)
         runCurrent()
-        androidx.lifecycle.ViewModelStore().apply { put("s31", vm); clear() }
+        androidx.lifecycle.ViewModelStore().apply {
+            put("s31", vm)
+            clear()
+        }
         resume.complete(Unit)
         advanceUntilIdle()
         assertEquals(listOf(0.75f), persisted.map { it.blockFraction })
@@ -1153,7 +1157,10 @@ class NovelReaderViewModelTest {
     fun s31RapidNewRouteWinsOverAnOlderSuspendedAdjacentLoad() = transitionTest {
         val f = TransitionFixture()
         val gate = CompletableDeferred<Unit>()
-        f.nextLoader = { gate.await(); f.nextContent }
+        f.nextLoader = {
+            gate.await()
+            f.nextContent
+        }
         val vm = f.vm()
         vm.attach(CHAPTER_ID)
         advanceUntilIdle()
@@ -1197,9 +1204,12 @@ class NovelReaderViewModelTest {
 
     @Test
     fun c5InitialSourceAscendingPublishesIdentityAndNext() = transitionTest {
-        val f = TransitionFixture(work = manga().copy(
-            title = "Transition Work", chapterFlags = Manga.CHAPTER_SORTING_SOURCE or Manga.CHAPTER_SORT_ASC,
-        ))
+        val f = TransitionFixture(
+            work = manga().copy(
+                title = "Transition Work",
+                chapterFlags = Manga.CHAPTER_SORTING_SOURCE or Manga.CHAPTER_SORT_ASC,
+            ),
+        )
         val vm = f.vm()
         vm.load(CHAPTER_ID)
         advanceUntilIdle()
@@ -1218,9 +1228,11 @@ class NovelReaderViewModelTest {
 
     @Test
     fun c5InitialSourceDescendingStillAdvancesInReadingOrder() = transitionTest {
-        val f = TransitionFixture(work = manga().copy(
-            chapterFlags = Manga.CHAPTER_SORTING_SOURCE or Manga.CHAPTER_SORT_DESC,
-        ))
+        val f = TransitionFixture(
+            work = manga().copy(
+                chapterFlags = Manga.CHAPTER_SORTING_SOURCE or Manga.CHAPTER_SORT_DESC,
+            ),
+        )
         val vm = f.vm()
         vm.load(CHAPTER_ID)
         advanceUntilIdle()
@@ -1334,7 +1346,11 @@ class NovelReaderViewModelTest {
         val f = TransitionFixture()
         val entered = CompletableDeferred<Unit>()
         val resume = CompletableDeferred<Unit>()
-        f.nextLoader = { entered.complete(Unit); resume.await(); f.nextContent }
+        f.nextLoader = {
+            entered.complete(Unit)
+            resume.await()
+            f.nextContent
+        }
         val vm = f.vm()
         vm.load(CHAPTER_ID)
         advanceUntilIdle()
@@ -1370,14 +1386,21 @@ class NovelReaderViewModelTest {
         val publications = mutableListOf<Triple<ReadingPosition, Long?, NovelReaderTitles>>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             vm.content.collect {
-                if (it == f.nextContent) publications += Triple(vm.position.value, vm.activeChapterId.value, vm.titles.value)
+                if (it ==
+                    f.nextContent
+                ) {
+                    publications += Triple(vm.position.value, vm.activeChapterId.value, vm.titles.value)
+                }
             }
         }
         vm.load(CHAPTER_ID)
         advanceUntilIdle()
         vm.openNextChapter(f.oldPosition)
         advanceUntilIdle()
-        assertEquals(listOf(Triple(f.nextPosition, NEXT_ID, NovelReaderTitles("Transition Work", "Chapter 6"))), publications)
+        assertEquals(
+            listOf(Triple(f.nextPosition, NEXT_ID, NovelReaderTitles("Transition Work", "Chapter 6"))),
+            publications,
+        )
         assertEquals(listOf(CHAPTER_ID), f.saves.map { it.first })
         coVerify(exactly = 1) { f.progress.get(NEXT_ID) }
         f.assertNoCompletion()
@@ -1426,8 +1449,12 @@ class NovelReaderViewModelTest {
         val savesBefore = f.saves.toList()
         val historyBefore = f.histories.toList()
         val otherStateBefore = listOf(
-            vm.activeChapterId.value, vm.navigation.value, vm.error.value, vm.nextChapterError.value,
-            vm.isLoading.value, vm.isTransitioning.value,
+            vm.activeChapterId.value,
+            vm.navigation.value,
+            vm.error.value,
+            vm.nextChapterError.value,
+            vm.isLoading.value,
+            vm.isTransitioning.value,
         )
         vm.saveProgress(CHAPTER_ID, ReadingPosition.START)
         vm.markRead(CHAPTER_ID)
@@ -1437,8 +1464,12 @@ class NovelReaderViewModelTest {
         assertEquals(
             otherStateBefore,
             listOf(
-                vm.activeChapterId.value, vm.navigation.value, vm.error.value, vm.nextChapterError.value,
-                vm.isLoading.value, vm.isTransitioning.value,
+                vm.activeChapterId.value,
+                vm.navigation.value,
+                vm.error.value,
+                vm.nextChapterError.value,
+                vm.isLoading.value,
+                vm.isTransitioning.value,
             ),
         )
         assertEquals(f.nextContent, vm.content.value)
@@ -1461,7 +1492,10 @@ class NovelReaderViewModelTest {
         val f = TransitionFixture()
         val entered = CompletableDeferred<Unit>()
         val resume = CompletableDeferred<Unit>()
-        f.beforeUpdate = { entered.complete(Unit); resume.await() }
+        f.beforeUpdate = {
+            entered.complete(Unit)
+            resume.await()
+        }
         val vm = f.vm()
         vm.load(CHAPTER_ID)
         advanceUntilIdle()
@@ -1560,7 +1594,11 @@ class NovelReaderViewModelTest {
         val f = TransitionFixture()
         val entered = CompletableDeferred<Unit>()
         val resume = CompletableDeferred<Unit>()
-        f.nextLoader = { entered.complete(Unit); resume.await(); f.nextContent }
+        f.nextLoader = {
+            entered.complete(Unit)
+            resume.await()
+            f.nextContent
+        }
         val vm = f.vm()
         vm.load(CHAPTER_ID)
         advanceUntilIdle()

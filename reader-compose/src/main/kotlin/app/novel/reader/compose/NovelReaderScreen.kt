@@ -1,10 +1,10 @@
 package app.novel.reader.compose
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,7 +17,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,12 +33,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.semantics.isTraversalGroup
-import androidx.compose.ui.semantics.paneTitle
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.novel.reader.core.BlockLayout
 import app.novel.reader.core.ReaderSettings
@@ -148,7 +144,8 @@ data class ReaderChapterFooter(
  *
  * Upper-half taps toggle an overlay toolbar without resizing the document; scrolling and native text selection
  * keep their own gestures. Labels and actions come from the resource-owning host. Controls remain hidden until
- * an upper-half tap; no floating invoker covers the document. Sharing uses only the native selected text.
+ * an upper-half tap; no floating invoker covers the document. The overlay temporarily covers upper prose while
+ * visible; hiding it reveals the same text without permanent padding. Sharing uses only the native selected text.
  *
  * @param workTitle the work's title, shown above the chapter title in the top overlay.
  * @param chapterTitle the loaded chapter's title. Both titles ellipsize rather than widening the toolbar.
@@ -270,6 +267,11 @@ fun NovelReaderScreen(
             }
     }
 
+    val toolbarAlpha by animateFloatAsState(
+        targetValue = if (controlsVisible) 1f else 0f,
+        animationSpec = readerToolbarAnimation,
+        label = "reader toolbar",
+    )
     when (surface) {
         is ReaderSurfaceState.Content -> Box(
             modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars),
@@ -307,7 +309,16 @@ fun NovelReaderScreen(
                             onPrevious = {
                                 if (positionRestored && !footer.isPending) {
                                     val sample = listState.progressSample(surface.content.blocks.lastIndex)
-                                    onPreviousChapter(if (sample.atEnd) ReadingPosition(surface.content.blocks.lastIndex, 1f) else sample.position)
+                                    onPreviousChapter(
+                                        if (sample.atEnd) {
+                                            ReadingPosition(
+                                                surface.content.blocks.lastIndex,
+                                                1f,
+                                            )
+                                        } else {
+                                            sample.position
+                                        },
+                                    )
                                 }
                             },
                             onReturn = onReturnToChapter,
@@ -315,33 +326,21 @@ fun NovelReaderScreen(
                     }
                 },
             )
-            // Overlay instead of resizing the list: opening controls must not change the reading position.
-            if (controlsVisible) {
-                Surface(
-                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().semantics {
-                        isTraversalGroup = true
-                        paneTitle = controlsLabel
+            if (controlsVisible || toolbarAlpha > 0f) {
+                ReaderToolbar(
+                    theme = effectiveSettings.theme,
+                    controlsLabel = controlsLabel,
+                    backLabel = backLabel,
+                    settingsLabel = settingsLabel,
+                    workTitle = workTitle,
+                    chapterTitle = chapterTitle,
+                    onBack = onBack,
+                    onSettings = onSettings,
+                    modifier = Modifier.align(Alignment.TopCenter).graphicsLayer {
+                        alpha = toolbarAlpha
+                        translationY = -size.height * (1f - toolbarAlpha)
                     },
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onBack) { Text(backLabel) }
-                        Column(modifier = Modifier.weight(1f).padding(8.dp)) {
-                            Text(
-                                text = workTitle,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = chapterTitle,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        TextButton(onClick = onSettings) { Text(settingsLabel) }
-                    }
-                }
+                )
             }
         }
 

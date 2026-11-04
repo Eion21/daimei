@@ -272,7 +272,7 @@ class NovelReaderInteractionTest {
     }
 
     @Test
-    fun singleFullWidthTopOverlayShowsTitlesWithoutMovingContentOrInsets() = withReader(diagnostics = true, geometry = true) {
+    fun topOverlayKeepsViewportParagraphsAndInsetsStationary() = withReader(diagnostics = true, geometry = true) {
         fun bounds(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen)
         fun document() = checkNotNull(find(automation.rootInActiveWindow) { it.isScrollable })
         fun insets() = AtomicReference<android.graphics.Insets>().also { result ->
@@ -296,7 +296,7 @@ class NovelReaderInteractionTest {
             }
             fun occurrences(node: AccessibilityNodeInfo?, text: String): Int {
                 if (node == null) return 0
-                return (if (node.isVisibleToUser && node.text?.toString() == text) 1 else 0) +
+                return (if (node.isVisibleToUser && (node.text?.toString() == text || node.contentDescription?.toString() == text)) 1 else 0) +
                     (0 until node.childCount).sumOf { occurrences(node.getChild(it), text) }
             }
             for (text in listOf("Reader back", "C3 Fixture Work", "C3 Fixture Chapter", "Reader settings")) {
@@ -319,7 +319,9 @@ class NovelReaderInteractionTest {
             assertTrue(work.right <= settings.left && chapter.right <= settings.left)
             assertTrue(work.top <= chapter.top)
             assertTrue(settings.centerX() > viewport.centerX())
-            assertStationary(before, probe.snapshot("after-show-$it"))
+            val shown = probe.snapshot("after-show-$it")
+            assertStationary(before, shown)
+            assertEquals("Document viewport remains fixed beneath overlay", viewport, bounds(document()))
             assertEquals(originalInsets, insets())
             assertEquals(position, progress.get())
             tap(viewport.right - 2f, viewport.top + viewport.height() * 0.35f)

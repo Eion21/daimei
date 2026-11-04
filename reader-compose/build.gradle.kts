@@ -22,6 +22,8 @@ dependencies {
     api(projects.novelApi)
 
     // Compose BOM and tooling preview come from `mihonx.plugins.compose`.
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.materialIconsCore)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)

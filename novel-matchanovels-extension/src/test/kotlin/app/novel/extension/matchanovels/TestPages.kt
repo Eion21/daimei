@@ -9,8 +9,8 @@ package app.novel.extension.matchanovels
  *
  * The shapes are the measured ones: `article[data-mn-tarjeta]` cards whose cover points at
  * `/_next/image?url=...`, a `Book` JSON-LD block beside a `BreadcrumbList`, chapter anchors that
- * carry `data-bloqueado`/`data-leido` (which are not gates and are ignored), and chapter prose in
- * `<p>` next to header/footer chrome.
+ * carry `data-bloqueado`/`data-leido` (ignored in lists; access is determined by the chapter page),
+ * and chapter prose in `<p>` next to header/footer chrome.
  */
 internal object TestPages {
 
@@ -63,6 +63,19 @@ internal object TestPages {
 <nav><a href="/novela/I-Married-The-Dragon-I-Killed/capitulo/1">Anterior</a><a href="/novela/I-Married-The-Dragon-I-Killed">Índice</a><a href="/novela/I-Married-The-Dragon-I-Killed/capitulo/2">Siguiente</a></nav>
 <section data-mn-comentarios="1"><h2>Comentarios</h2><span>Inicia sesión para comentar</span></section>
 <footer><p>Contacto &amp; DMCASobre nosotrosTérminos de usoPolítica de privacidad© 2026 MatchaNovels. Todos los derechos reservados.</p></footer>
+</body></html>"""
+
+    /** Synthetic restriction card based on the observed chapter 405 heading and access notice. */
+    const val CHAPTER_REQUIRES_VIP = """<!doctype html><html><body>
+<header><h1>Capítulo 405</h1></header>
+<div><h2>Este capítulo es para miembros VIP</h2>
+<p>El capítulo está bloqueado hasta obtener acceso.</p><a href="/vip">Membresía VIP</a></div>
+</body></html>"""
+
+    /** Synthetic narrative: mentioning VIP does not itself mean access is restricted. */
+    const val CHAPTER_WITH_VIP_PROSE = """<!doctype html><html><body>
+<header><h1>Capítulo 2</h1><h2>Este capítulo es para miembros VIP</h2></header>
+<div data-mn-texto-capitulo="1"><p>La invitada VIP cruzó la plaza.</p></div>
 </body></html>"""
 
     /** A page whose prose container holds only chrome, so it must parse to zero blocks. */

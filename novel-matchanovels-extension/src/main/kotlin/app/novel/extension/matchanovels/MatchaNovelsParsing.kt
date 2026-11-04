@@ -186,8 +186,8 @@ internal object MatchaNovelsParsing {
 
     /**
      * The chapter list, read from the novel page's anchors. A chapter is identified by the `{n}` in
-     * `/novela/{slug}/capitulo/{n}`; `data-bloqueado`/`data-leido` are ignored on purpose — the VIP
-     * tag does not gate the HTML (decision and measurement), so it must not drop a chapter here.
+     * `/novela/{slug}/capitulo/{n}`; `data-bloqueado`/`data-leido` are ignored because a list flag
+     * alone does not establish chapter-page access. Keep the chapter and check its page when read.
      *
      * The page repeats its first chapter twice (a "start reading" call to action and the real list
      * row), so candidates for the same number are collapsed, preferring the one titled like a
@@ -248,6 +248,9 @@ internal object MatchaNovelsParsing {
     fun parseChapterContent(html: String): ChapterContent {
         val document = Jsoup.parse(html)
         document.select(NOISE_SELECTORS).remove()
+        check(document.select("h2").none { normalize(it.text()) == "Este capítulo es para miembros VIP" }) {
+            "MatchaNovels: chapter requires VIP membership"
+        }
 
         val blocks = document.select("p")
             .map { normalize(it.text()) }

@@ -1,6 +1,7 @@
 package app.novel.extension.matchanovels
 
 import app.novel.source.api.Chapter
+import app.novel.source.api.ContentBlock
 import app.novel.source.api.Novel
 import app.novel.source.api.NovelNetwork
 import kotlinx.coroutines.runBlocking
@@ -104,6 +105,40 @@ class MatchaNovelsSourceTest {
 
         val content = source.getChapterContent(chapter)
         assertEquals(3, content.blocks.size)
+    }
+
+    @Test
+    fun `a VIP restriction card fails instead of returning the membership notice as prose`() {
+        val url = "$novelUrl/capitulo/405"
+        val source = source(mapOf(url to TestPages.CHAPTER_REQUIRES_VIP))
+        val chapter = Chapter(
+            sourceId = "matchanovels",
+            novelId = novel.id,
+            id = "405",
+            title = "Capítulo 405",
+            url = url,
+        )
+
+        val failure = assertThrows(IllegalStateException::class.java) {
+            runBlocking { source.getChapterContent(chapter) }
+        }
+        assertEquals("MatchaNovels: chapter requires VIP membership", failure.message)
+    }
+
+    @Test
+    fun `a listed chapter with the old blocked flag and incidental VIP prose remains readable`() = runBlocking {
+        val url = "$novelUrl/capitulo/2"
+        val source = source(mapOf(novelUrl to TestPages.NOVEL, url to TestPages.CHAPTER_WITH_VIP_PROSE))
+
+        val chapter = source.getChapters(novel).single { it.id == "2" }
+        assertEquals(url, chapter.url)
+        val content = source.getChapterContent(chapter)
+        assertEquals(
+            listOf("La invitada VIP cruzó la plaza."),
+            content.blocks.map {
+                (it as ContentBlock.Paragraph).text
+            },
+        )
     }
 
     @Test

@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.tachiyomi.data.track.comick
 
 import android.net.Uri

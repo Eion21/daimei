@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package tachiyomi.domain.release.interactor
 
 import dev.zacsweers.metro.Inject

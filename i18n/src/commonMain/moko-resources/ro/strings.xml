@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Daimei; see MODIFICATIONS.md. -->
 <resources>
     <string name="name">Nume</string>
     <string name="categories">Categorii</string>

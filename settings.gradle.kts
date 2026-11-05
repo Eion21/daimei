@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 pluginManagement {
     includeBuild("gradle/build-logic")
     repositories {

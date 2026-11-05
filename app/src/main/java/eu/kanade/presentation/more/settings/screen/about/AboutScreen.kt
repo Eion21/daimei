@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.presentation.more.settings.screen.about
 
 import android.content.Context

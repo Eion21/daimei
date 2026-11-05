@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.domain.chapter.interactor
 
 import dev.zacsweers.metro.Inject

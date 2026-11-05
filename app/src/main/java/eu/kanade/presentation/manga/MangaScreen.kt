@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.presentation.manga
 
 import androidx.activity.compose.BackHandler

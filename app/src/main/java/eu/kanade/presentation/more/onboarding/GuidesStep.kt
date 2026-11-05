@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.presentation.more.onboarding
 
 import androidx.compose.foundation.layout.Arrangement

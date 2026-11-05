@@ -1,3 +1,5 @@
+<!-- Modified for Daimei; see MODIFICATIONS.md. -->
+
 # Contributing to Daimei
 
 Daimei is a light novel reader fork of Mihon 0.21.2. Discuss fork-specific changes and reports with the Daimei maintainer through your existing channel; the upstream Mihon project is not Daimei support. Keep changes focused and preserve inherited compatibility and attribution.
@@ -18,4 +20,4 @@ Report the commands and results actually observed; a focused test is not evidenc
 
 For novel extension work, consult the [novel API guide](novel-api/README.md). Avoid changing package identifiers, extension trust or compatibility behavior as a side effect of branding. Kitsu retains its inherited runtime and Apollo introspection User-Agent values for compatibility; see the [README](README.md#reading-and-development).
 
-Record Daimei changes in [Daimei history](DAIMEI-CHANGELOG.md), not in the preserved [upstream Mihon history](CHANGELOG.md). Retain existing copyright and attribution notices; see [LICENSE](LICENSE), [NOTICE](NOTICE), and the [modifications inventory](MODIFICATIONS.md). Per-file notice format remains subject to owner approval. Follow the [code of conduct](CODE_OF_CONDUCT.md).
+Record Daimei changes in [Daimei history](DAIMEI-CHANGELOG.md), not in the preserved [upstream Mihon history](CHANGELOG.md). Retain existing copyright and attribution notices; see [LICENSE](LICENSE), [NOTICE](NOTICE), and the [modifications inventory](MODIFICATIONS.md). Modified inherited files carry the notices documented in [MODIFICATIONS.md](MODIFICATIONS.md). Follow the [code of conduct](CODE_OF_CONDUCT.md).

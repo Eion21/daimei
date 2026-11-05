@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.tachiyomi.extension.util
 
 import android.content.Context

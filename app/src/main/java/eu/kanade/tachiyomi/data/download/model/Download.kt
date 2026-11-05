@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.tachiyomi.data.download.model
 
 import eu.kanade.tachiyomi.source.Source

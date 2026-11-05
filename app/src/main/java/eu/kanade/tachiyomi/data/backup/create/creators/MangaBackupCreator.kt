@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.tachiyomi.data.backup.create.creators
 
 import app.novel.source.api.ChapterContent

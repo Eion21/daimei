@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.presentation.browse
 
 import androidx.compose.animation.core.animateDpAsState

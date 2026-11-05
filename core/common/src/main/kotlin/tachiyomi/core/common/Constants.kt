@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package tachiyomi.core.common
 
 object Constants {

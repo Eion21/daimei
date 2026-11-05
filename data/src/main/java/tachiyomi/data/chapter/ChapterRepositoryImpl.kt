@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package tachiyomi.data.chapter
 
 import app.cash.sqldelight.async.coroutines.awaitAsList

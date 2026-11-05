@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package tachiyomi.source.local
 
 import android.content.Context

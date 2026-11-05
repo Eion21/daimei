@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.domain.source.interactor
 
 import app.novel.runtime.SourceRegistry

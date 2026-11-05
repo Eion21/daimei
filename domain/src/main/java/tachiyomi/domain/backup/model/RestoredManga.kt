@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package tachiyomi.domain.backup.model
 
 import tachiyomi.domain.chapter.model.Chapter

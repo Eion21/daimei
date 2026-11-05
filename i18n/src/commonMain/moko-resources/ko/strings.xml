@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Daimei; see MODIFICATIONS.md. -->
 <resources>
     <string name="name">이름</string>
     <string name="categories">카테고리</string>

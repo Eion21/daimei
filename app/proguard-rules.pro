@@ -1,3 +1,5 @@
+# Modified for Daimei; see MODIFICATIONS.md.
+
 -dontobfuscate
 
 # Injekt reads the injected type from the generic superclass of its type tokens

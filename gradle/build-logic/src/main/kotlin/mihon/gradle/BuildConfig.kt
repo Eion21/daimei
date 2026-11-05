@@ -1,3 +1,5 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package mihon.gradle
 
 import org.gradle.api.Project

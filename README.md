@@ -1,3 +1,5 @@
+<!-- Modified for Daimei; see MODIFICATIONS.md. -->
+
 # Daimei
 
 Daimei is an Android light novel reader fork of Mihon 0.21.2. It builds on Mihon's reader and adds novel sources and text-reading integration. The [original Mihon repository](https://github.com/mihonapp/mihon) is upstream, not a support channel for Daimei.

@@ -1,22 +1,21 @@
+// Modified for Daimei; see MODIFICATIONS.md.
+
 package eu.kanade.presentation.more.settings.screen
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
+import eu.kanade.tachiyomi.ui.browse.extension.openExtensionRepositories
 import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.authenticate
 import mihon.app.di.appGraph
 import mihon.domain.extension.model.ContentWarning
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 
 object SettingsBrowseScreen : SearchableSettings {
@@ -31,9 +30,6 @@ object SettingsBrowseScreen : SearchableSettings {
         val navigator = LocalNavigator.currentOrThrow
 
         val sourcePreferences = remember { context.appGraph.sourcePreferences }
-        val getExtensionStoreCountAsFlow = remember { context.appGraph.getExtensionStoreCountAsFlow }
-
-        val reposCount by getExtensionStoreCountAsFlow().collectAsState(0)
 
         return listOf(
             Preference.PreferenceGroup(
@@ -44,10 +40,10 @@ object SettingsBrowseScreen : SearchableSettings {
                         title = stringResource(MR.strings.pref_hide_in_library_items),
                     ),
                     Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.extensionStores),
-                        subtitle = pluralStringResource(MR.plurals.num_repos, reposCount.toInt(), reposCount),
+                        title = stringResource(MR.strings.novel_catalog_title),
+                        subtitle = stringResource(MR.strings.novel_catalog_query_hint),
                         onClick = {
-                            navigator.push(ExtensionStoresScreen())
+                            openExtensionRepositories { navigator.push(it) }
                         },
                     ),
                 ),

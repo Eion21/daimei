@@ -1,3 +1,4 @@
+// Modified for Daimei; see MODIFICATIONS.md.
 package eu.kanade.tachiyomi.ui.browse.extension
 
 import androidx.activity.compose.BackHandler
@@ -14,9 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.ExtensionScreen
-import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -38,15 +37,11 @@ fun extensionsTab(
         titleRes = MR.strings.label_extensions,
         badgeNumber = updatesCount.takeIf { it > 0 },
         searchEnabled = true,
-        actions = listOf(
-            AppBar.OverflowAction(
-                title = stringResource(MR.strings.action_filter),
-                onClick = { navigator.push(ExtensionFilterScreen()) },
-            ),
-            AppBar.OverflowAction(
-                title = stringResource(MR.strings.extensionStores),
-                onClick = { navigator.push(ExtensionStoresScreen()) },
-            ),
+        actions = extensionRepositoryOverflowActions(
+            filterLabel = stringResource(MR.strings.action_filter),
+            repositoryLabel = stringResource(MR.strings.novel_catalog_title),
+            openFilter = { navigator.push(ExtensionFilterScreen()) },
+            navigate = { navigator.push(it) },
         ),
         content = { contentPadding, _ ->
             val state by extensionsViewModel.state.collectAsStateWithLifecycle()

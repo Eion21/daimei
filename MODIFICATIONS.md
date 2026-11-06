@@ -57,6 +57,21 @@ licenses or the accepted S37 fixes. Added files receive no gratuitous notice
 claiming they were modified upstream files; deleted files cannot carry new
 headers and are identified in the baseline section.
 
+## S38 forward changes
+
+S38 adds a read-only novel-catalog consumer, isolated future APK policy tests and a
+separate metadata screen. It adds an overflow navigation action to inherited
+`app/src/main/java/eu/kanade/tachiyomi/ui/browse/extension/ExtensionsTab.kt` and
+English catalog copy to `i18n/src/commonMain/moko-resources/base/strings.xml`.
+Both carry the per-file modification notice. Existing credits and licenses,
+installed-extension behavior, signing/trust gates and reading data are preserved.
+Remote APK download/install/update remains disabled; valid metadata does not
+promote `hostCompatible: false`. See [S38 scope and limitations](docs/s38-novel-catalog.md).
+The unified-repositories revision changes the Extensions tab, empty-state and Browse settings navigation, MainActivity legacy-link handling, base and Spanish catalog copy, and the S38 documentation. It adds a stateless navigation helper and focused tests. SettingsBrowseScreen.kt now carries its own modification notice; the earlier 114-file snapshot remains unchanged. Legacy storage, loaders, installation and trust infrastructure remain in place.
+
+The 114-file inventory below remains the historical accepted S37 snapshot, not a
+new inventory or a claim that S38 has been committed or published.
+
 ## Modified existing files (114)
 
 - `.gitattributes`

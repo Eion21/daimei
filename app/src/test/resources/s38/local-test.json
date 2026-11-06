@@ -1,0 +1,70 @@
+{
+  "extensions": [
+    {
+      "artifact": {
+        "downloadUrl": null,
+        "fileName": "novel-jabrascan-extension-debug.apk",
+        "sha256": "8c825a8b3ba2ce16724a25327c1c1f4db403d21389946d0c521a21d537c232f2",
+        "size": 9201981
+      },
+      "entryClass": "app.novel.extension.jabrascan.JabraScanSource",
+      "id": "app.novel.extension.jabrascan",
+      "minSdk": 26,
+      "name": "JabraScan (extension)",
+      "novelApi": "1.3",
+      "signing": {
+        "certificateSha256": [
+          "64d12ca2d78d13b81e2f6369dff8150c0d30eb92ec52e3bd9365b3daf4576ff9"
+        ],
+        "purpose": "development-only"
+      },
+      "versionCode": 4,
+      "versionName": "1.0.3"
+    },
+    {
+      "artifact": {
+        "downloadUrl": null,
+        "fileName": "novel-matchanovels-extension-debug.apk",
+        "sha256": "80d403ec1c3bb76e313f206b2d703a97778b18b5a4cf8e779284c4341ec028d8",
+        "size": 312096
+      },
+      "entryClass": "app.novel.extension.matchanovels.MatchaNovelsSource",
+      "id": "app.novel.extension.matchanovels",
+      "minSdk": 26,
+      "name": "MatchaNovels (extension)",
+      "novelApi": "1.1",
+      "signing": {
+        "certificateSha256": [
+          "64d12ca2d78d13b81e2f6369dff8150c0d30eb92ec52e3bd9365b3daf4576ff9"
+        ],
+        "purpose": "development-only"
+      },
+      "versionCode": 3,
+      "versionName": "1.0.2"
+    },
+    {
+      "artifact": {
+        "downloadUrl": null,
+        "fileName": "novel-skynovels-extension-debug.apk",
+        "sha256": "a8c496628c5f47b8289078e2fb81e618dbc136e04289d8e47593a9b606a14a4d",
+        "size": 88497
+      },
+      "entryClass": "app.novel.extension.skynovels.SkyNovelsSource",
+      "id": "app.novel.extension.skynovels",
+      "minSdk": 26,
+      "name": "SkyNovels (extension)",
+      "novelApi": "1.1",
+      "signing": {
+        "certificateSha256": [
+          "64d12ca2d78d13b81e2f6369dff8150c0d30eb92ec52e3bd9365b3daf4576ff9"
+        ],
+        "purpose": "development-only"
+      },
+      "versionCode": 3,
+      "versionName": "1.0.2"
+    }
+  ],
+  "hostCompatible": false,
+  "schemaVersion": 1,
+  "status": "local-test"
+}

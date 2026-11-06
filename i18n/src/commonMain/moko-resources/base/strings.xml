@@ -3,6 +3,28 @@
 <resources>
     <string name="app_name" translatable="false">Daimei</string>
 
+    <!-- Read-only novel catalog -->
+    <string name="novel_catalog_title">Extension repositories</string>
+    <string name="novel_catalog_query_hint">Temporary query; no repository is saved.</string>
+    <string name="novel_catalog_legacy_repository_unsupported">Legacy manga repository links are not supported.</string>
+    <string name="novel_catalog_explanation">Enter an HTTPS catalog URL to request novel extension metadata. This does not add a repository or enable remote installation.</string>
+    <string name="novel_catalog_url">HTTPS catalog URL</string>
+    <string name="novel_catalog_fetch">Request metadata</string>
+    <string name="novel_catalog_initial">No metadata requested.</string>
+    <string name="novel_catalog_loading">Loading metadata…</string>
+    <string name="novel_catalog_origin">Catalog origin: %1$s</string>
+    <string name="novel_catalog_available">Catalog metadata, not installed extensions</string>
+    <string name="novel_catalog_package">Package: %1$s</string>
+    <string name="novel_catalog_version">Version: %1$s (code %2$s)</string>
+    <string name="novel_catalog_api">Novel API: %1$s</string>
+    <string name="novel_catalog_blocked">Read-only · Installation unavailable · hostCompatible: false</string>
+    <string name="novel_catalog_error_url">Invalid catalog URL. Use HTTPS without credentials or a fragment.</string>
+    <string name="novel_catalog_error_network">Network error while requesting metadata.</string>
+    <string name="novel_catalog_error_http">Catalog HTTP response was rejected.</string>
+    <string name="novel_catalog_error_size">Catalog response is too large.</string>
+    <string name="novel_catalog_error_json">Catalog JSON is invalid.</string>
+    <string name="novel_catalog_error_schema">Catalog schema is incompatible.</string>
+
     <!-- Generic strings -->
     <string name="on">On</string>
     <string name="off">Off</string>

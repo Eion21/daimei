@@ -45,12 +45,12 @@ import eu.kanade.presentation.browse.components.ExtensionIcon
 import eu.kanade.presentation.browse.components.ExtensionPill
 import eu.kanade.presentation.browse.components.label
 import eu.kanade.presentation.components.WarningBanner
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
 import eu.kanade.presentation.util.rememberRequestPackageInstallsPermissionState
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionUiModel
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsViewModel
+import eu.kanade.tachiyomi.ui.browse.extension.openExtensionRepositories
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.launchRequestPackageInstallsPermission
@@ -112,9 +112,9 @@ fun ExtensionScreen(
                     modifier = Modifier.padding(contentPadding),
                     actions = listOf(
                         EmptyScreenAction(
-                            stringRes = MR.strings.extensionStores,
+                            stringRes = MR.strings.novel_catalog_title,
                             icon = MaterialSymbols.Rounded.Settings,
-                            onClick = { navigator.push(ExtensionStoresScreen()) },
+                            onClick = { openExtensionRepositories { navigator.push(it) } },
                         ),
                     ),
                 )

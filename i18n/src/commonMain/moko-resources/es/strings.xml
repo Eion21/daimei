@@ -1,6 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modified for Daimei; see MODIFICATIONS.md. -->
 <resources>
+    <!-- Catálogo de novelas de solo consulta -->
+    <string name="novel_catalog_title">Repositorios de extensiones</string>
+    <string name="novel_catalog_query_hint">Consulta temporal; no se guarda ningún repositorio.</string>
+    <string name="novel_catalog_legacy_repository_unsupported">Los enlaces de repositorios manga heredados no son compatibles.</string>
+    <string name="novel_catalog_explanation">Introduce la URL HTTPS de un catálogo de novelas para consultar sus metadatos. La consulta es temporal, no se guarda ningún repositorio ni se habilita la instalación remota.</string>
+    <string name="novel_catalog_url">URL HTTPS del catálogo</string>
+    <string name="novel_catalog_fetch">Consultar catálogo</string>
+    <string name="novel_catalog_initial">Todavía no se ha consultado ningún catálogo.</string>
+    <string name="novel_catalog_loading">Consultando metadatos…</string>
+    <string name="novel_catalog_origin">Origen del catálogo: %1$s</string>
+    <string name="novel_catalog_available">Metadatos del catálogo, no extensiones instaladas</string>
+    <string name="novel_catalog_package">Paquete: %1$s</string>
+    <string name="novel_catalog_version">Versión: %1$s (código %2$s)</string>
+    <string name="novel_catalog_api">API de novelas: %1$s</string>
+    <string name="novel_catalog_blocked">Solo consulta · Instalación no disponible · hostCompatible: false</string>
+    <string name="novel_catalog_error_url">URL de catálogo no válida. Usa HTTPS sin credenciales ni fragmento.</string>
+    <string name="novel_catalog_error_network">Error de conexión al consultar los metadatos.</string>
+    <string name="novel_catalog_error_http">Se rechazó la respuesta HTTP del catálogo.</string>
+    <string name="novel_catalog_error_size">La respuesta del catálogo es demasiado grande.</string>
+    <string name="novel_catalog_error_json">El JSON del catálogo no es válido.</string>
+    <string name="novel_catalog_error_schema">Catálogo incompatible</string>
     <string name="name">Nombre</string>
     <string name="label_settings">Ajustes</string>
     <string name="label_download_queue">Cola de descargas</string>

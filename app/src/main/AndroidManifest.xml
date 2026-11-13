@@ -267,6 +267,11 @@
             android:name="android.webkit.WebView.MetricsOptOut"
             android:value="true" />
 
+        <!-- S39 callback only; production installation remains cold-disabled. -->
+        <receiver
+            android:name=".extension.novel.NovelInstallResultReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

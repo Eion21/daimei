@@ -6,7 +6,7 @@
 
 A Gradle daemon is not a demonstrated private human console. Do not supply official passwords through Gradle properties, environment variables, JVM/process arguments, files or persistent signing configuration. Do not use the legacy root `keystore.properties` or `MIHON_GITHUB_RELEASE` route: it changes Debug signing. Release has no fallback to Debug. Keep the two existing official keys; never generate a key per build or in CI.
 
-The human reports both stores passed `keytool -list` and `keytool -certreq` with exit0. The first GPG AES-256 backup on DATOS recovered the original bytes. These are human-confirmed facts, not agent keystore reads. A second independent backup and complete restored-key usability verification are still pending. Public certificate facts supplied and verified by the human: PKCS12, RSA4096, SHA256withRSA, valid until 2056-11-08. Expected app certificate SHA-256: `e665aa10b5ad8c1d5c3f993a3e733687ff0ef066da465706a69c7635b0652d77`; expected extensions certificate SHA-256: `2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408`. These are certificate fingerprints, NOT hashes of unsigned APKs or agent keystore inspection.
+The human reports both stores passed `keytool -list` and `keytool -certreq` with exit0. The first GPG AES-256 backup on DATOS passed decryption, full restoration and byte comparisons against both original PKCS12 files (exit0). These are human-confirmed facts, not agent keystore reads; those checks are not repeated. Only the second independent backup remains pending for custody. Public certificate facts supplied and verified by the human: PKCS12, RSA4096, SHA256withRSA, valid until 2056-11-08. Expected app certificate SHA-256: `e665aa10b5ad8c1d5c3f993a3e733687ff0ef066da465706a69c7635b0652d77`; expected extensions certificate SHA-256: `2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408`. These are certificate fingerprints, NOT hashes of unsigned APKs or agent keystore inspection.
 
 ## Package without credentials
 
@@ -95,7 +95,7 @@ The input must already have been checked against the selected profile's exact pa
 - Recheck package/version/SDK/ABI and exact source-to-artifact identity. Preserve source IDs, API compatibility and required extension packaging exclusions.
 - Record only commit, tool version, manifest metadata, public certificate fingerprints/validity, APK hash/size and command outcomes. Never copy stores or passwords to reports/Git/CI.
 - Repeat separately for each intended ABI/app APK and extension, with a fresh output directory each time. There is no automatic signing loop, release upload or device install.
-- Finish the second independent encrypted backup and full restoration/usability check before claiming custody complete. Existing development-signed installations are NOT automatically update-compatible with a new official signer; no uninstall/migration is authorized here.
+- Finish and verify the second independent encrypted backup before claiming custody complete. The first backup's decryption/restoration/byte-equality checks are already human-confirmed PASS; do not repeat them as an unresolved first-backup gate. Existing development-signed installations are NOT automatically update-compatible with a new official signer; no uninstall/migration is authorized here.
 
 ## References and verification boundary
 

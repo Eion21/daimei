@@ -1,4 +1,47 @@
-# Beta 1 public installer
+# Beta 1 public installer (T14)
+
+## Scope
+
+Implements the public S39 installer activation (S3) and update/revocation controls (S4)
+for Daimei Beta 1. It reuses the existing `NovelExecutionHoldStore`, coordinator and
+`ExtensionManager` retraction; it does not change the loader signature/trust gate order.
+
+## Activation
+
+`NovelInstallActivation` is a real, explicit public activation. It is active only when the
+running host package is `app.daimei` **and** its complete current signing identity is
+exactly the pinned official host certificate:
+
+```
+e665aa10b5ad8c1d5c3f993a3e733687ff0ef066da465706a69c7635b0652d77
+```
+
+The gate requires modern complete signer facts whose current set equals that singleton —
+not merely contains it. A multi-signer host that includes the pin, a host whose pin
+survives only in its rotation history, and devices that expose no modern complete facts
+(Android 26/27 legacy signatures, or an unavailable read) all fail closed; there is no
+forged-complete fallback. Unsigned builds cannot claim that signer, so the controls fail
+closed.
+
+`NovelAndroidInstallBridge` now supports both the QA fixture policy and the public
+activation. `NovelInteractiveInstallRuntime` uses the combined `forHost()` factory so the
+right policy is selected automatically.
+
+## Allowed packages
+
+When public activation is active, installation is permitted only for the three official
+extension packages signed with the pinned extensions certificate:
+
+```
+2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408
+```
+
+- `app.novel.extension.matchanovels`
+- `app.novel.extension.skynovels`
+- `app.novel.extension.jabrascan`
+
+The bridge delegates exact artifact and catalog validation to the existing coordinator,
+inspector and hold-store flow.
 
 ## Public identity and application updates
 

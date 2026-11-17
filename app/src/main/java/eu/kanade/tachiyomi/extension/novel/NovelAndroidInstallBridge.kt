@@ -11,13 +11,14 @@ import android.os.Build
 import eu.kanade.tachiyomi.BuildConfig
 import java.io.InputStream
 
-/** Default construction is cold; only the compile-time pinned QA factory can activate dispatch. */
+/** Default construction is cold; only pinned QA or official public activation can dispatch. */
 internal class NovelAndroidInstallBridge private constructor(
     private val context: Context,
     private val sdk: Int,
     private val experiment: NovelInstallExperiment?,
+    private val activation: NovelInstallActivation?,
 ) : NovelInstallSessionBridge {
-    constructor(context: Context, sdk: Int = Build.VERSION.SDK_INT) : this(context, sdk, null)
+    constructor(context: Context, sdk: Int = Build.VERSION.SDK_INT) : this(context, sdk, null, null)
 
     private data class Binding(
         val record: NovelInstallRecord,
@@ -25,7 +26,10 @@ internal class NovelAndroidInstallBridge private constructor(
         val committed: Boolean = false,
     )
     private val bindings = mutableMapOf<Int, Binding>()
-    override val controlledTestActivation: Boolean get() = experiment?.active == true
+    override val controlledTestActivation: Boolean get() = experiment?.active == true || activation?.active == true
+
+    /** True only when the official public activation is active for this host. */
+    val publicActivationActive: Boolean get() = activation?.active == true
 
     override fun hasInstallPermission(): Boolean = context.packageManager.canRequestPackageInstalls()
 
@@ -42,7 +46,7 @@ internal class NovelAndroidInstallBridge private constructor(
 
     @Synchronized
     override fun createSession(record: NovelInstallRecord): Int {
-        require(experiment?.permits(record) == true)
+        require(experiment?.permits(record) == true || activation?.permits(record) == true)
         val id = context.packageManager.packageInstaller.createSession(sessionParams(record))
         require(id >= 0 && id !in bindings)
         bindings[id] = Binding(record.copy(currentSigners = record.currentSigners.toSet()))
@@ -88,7 +92,7 @@ internal class NovelAndroidInstallBridge private constructor(
         val id = record.sessionId ?: return NovelInstallDispatch.DISABLED
         val binding = bindings[id] ?: return NovelInstallDispatch.DISABLED
         val original = binding.record
-        val valid = experiment?.permits(record) == true && record.commitRequested &&
+        val valid = (experiment?.permits(record) == true || activation?.permits(record) == true) && record.commitRequested &&
             record.phase == NovelInstallPhase.COMMITTING && record.operationId == original.operationId &&
             record.nonce == original.nonce && record.packageName == original.packageName &&
             record.versionCode == original.versionCode && record.currentSigners == original.currentSigners &&
@@ -149,7 +153,29 @@ internal class NovelAndroidInstallBridge private constructor(
                 BuildConfig.BUILD_TYPE, app.packageName, BuildConfig.S39_INSTALL_EXPERIMENT,
                 BuildConfig.S39_FIXTURE_APK_SHA256, pins,
             )
-            return NovelAndroidInstallBridge(app, Build.VERSION.SDK_INT, policy)
+            return NovelAndroidInstallBridge(app, Build.VERSION.SDK_INT, policy, null)
+        }
+
+        fun forPublicActivation(context: Context): NovelAndroidInstallBridge {
+            val app = context.applicationContext ?: context
+            return NovelAndroidInstallBridge(app, Build.VERSION.SDK_INT, null, NovelInstallActivation.official(app))
+        }
+
+        /** Selects QA or public activation based on the actual host identity; both cannot be active. */
+        fun forHost(context: Context): NovelAndroidInstallBridge {
+            val app = context.applicationContext ?: context
+            return NovelAndroidInstallBridge(
+                app,
+                Build.VERSION.SDK_INT,
+                NovelInstallExperiment(
+                    BuildConfig.BUILD_TYPE,
+                    app.packageName,
+                    BuildConfig.S39_INSTALL_EXPERIMENT,
+                    BuildConfig.S39_FIXTURE_APK_SHA256,
+                    BuildConfig.S39_FIXTURE_SIGNERS.split(',').filter { it.isNotEmpty() }.toSet(),
+                ),
+                NovelInstallActivation.official(app),
+            )
         }
 
         fun decodeCallback(context: Context, intent: Intent): NovelInstallCallback? {

@@ -56,7 +56,7 @@ internal object NovelInteractiveInstallRuntime {
             NovelInstalledPackageReader(app),
             NovelExecutionBarrier.store(app),
             journal(app),
-            NovelAndroidInstallBridge.forQaExperiment(app),
+            NovelAndroidInstallBridge.forHost(app),
             NovelInstallRecognition { packageName, versionCode -> packageName to versionCode in recognized },
         ).also { coordinator = it }
     }

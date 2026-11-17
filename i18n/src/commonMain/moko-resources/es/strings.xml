@@ -951,4 +951,5 @@
     <string name="s39_execution_consent">¿Permitir que el código de este paquete y versión instalados se ejecute dentro de Daimei? Se vuelve a comprobar la identidad instalada y el conjunto completo de firmantes actuales. La autorización de ejecución dura este proceso; instalar en Android no la concede.\nPaquete: %1$s\nCódigo: %2$s\nConjunto SHA-256 de firmantes:\n%3$s</string>
     <string name="s39_continue">Continuar</string>
     <string name="s39_cancel">Cancelar</string>
+    <string name="daimei_official_app_releases">Versiones oficiales de Daimei</string>
 </resources>

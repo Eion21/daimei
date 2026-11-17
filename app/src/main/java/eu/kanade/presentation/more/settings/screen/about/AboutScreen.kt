@@ -59,6 +59,9 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.time.Instant
 
+/** A passive official page, separate from both automatic app and extension installers. */
+internal const val OFFICIAL_APP_RELEASES_URL = "https://github.com/Eion21/daimei/releases"
+
 internal fun shouldShowWhatsNew(isDebug: Boolean, releaseUrl: String): Boolean {
     if (isDebug || releaseUrl.isBlank()) return false
     if (!releaseUrl.startsWith("https://github.com/")) return true
@@ -114,6 +117,13 @@ object AboutScreen : Screen() {
                     TextPreferenceWidget(
                         title = stringResource(MR.strings.about_mihon_credit),
                         onPreferenceClick = { uriHandler.openUri("https://github.com/mihonapp/mihon") },
+                    )
+                }
+
+                item {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.daimei_official_app_releases),
+                        onPreferenceClick = { uriHandler.openUri(OFFICIAL_APP_RELEASES_URL) },
                     )
                 }
 

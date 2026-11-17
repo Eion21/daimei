@@ -1160,4 +1160,5 @@
     <string name="s39_execution_consent">Allow code from this exact installed package and version to run inside Daimei? Fresh installed identity and the complete current signer set are checked again. Trust is process-local; an Android install alone does not grant it.\nPackage: %1$s\nCode: %2$s\nSigner SHA-256 set:\n%3$s</string>
     <string name="s39_continue">Continue</string>
     <string name="s39_cancel">Cancel</string>
+    <string name="daimei_official_app_releases">Official Daimei releases</string>
 </resources>

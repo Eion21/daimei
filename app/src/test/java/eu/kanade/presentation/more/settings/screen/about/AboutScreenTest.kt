@@ -6,6 +6,11 @@ import org.junit.jupiter.api.Test
 class AboutScreenTest {
 
     @Test
+    fun `official app releases link targets Daimei independently of automatic updates`() {
+        OFFICIAL_APP_RELEASES_URL shouldBe "https://github.com/Eion21/daimei/releases"
+    }
+
+    @Test
     fun `whats new is hidden when release URL is empty`() {
         shouldShowWhatsNew(isDebug = false, releaseUrl = "") shouldBe false
     }

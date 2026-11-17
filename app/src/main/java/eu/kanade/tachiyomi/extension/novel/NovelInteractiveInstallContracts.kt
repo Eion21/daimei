@@ -73,7 +73,10 @@ internal interface NovelInstallJournal {
 internal data class NovelInstallStreamReceipt(val size: Long, val sha256: String)
 internal enum class NovelInstallDispatch { SUBMITTED, DISABLED }
 
-/** The real Android implementation is final and permanently returns false/DISABLED. */
+/** Process-local result; never persisted or equivalent to legacy signer trust. */
+internal enum class NovelExecutionConsentOutcome { GRANTED, DENIED }
+
+/** The default Android bridge is cold; only a separately pinned QA factory may dispatch. */
 internal interface NovelInstallSessionBridge {
     val controlledTestActivation: Boolean
     fun hasInstallPermission(): Boolean

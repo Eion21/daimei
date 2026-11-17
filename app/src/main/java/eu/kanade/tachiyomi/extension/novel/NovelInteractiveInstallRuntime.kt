@@ -1,13 +1,50 @@
 package eu.kanade.tachiyomi.extension.novel
 
 import android.content.Context
+import eu.kanade.tachiyomi.extension.model.Extension
+import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import java.nio.file.Path
 
-/** Production wiring is permanently cold. No catalog action, flag or installer preference enables it. */
+/** Only a pinned s39Qa build can activate its isolated installer experiment. */
 internal object NovelInteractiveInstallRuntime {
     private var coordinator: NovelInteractiveInstallCoordinator? = null
+    @Volatile private var recognized = emptySet<Pair<String, Long>>()
 
-    fun quarantineRoot(context: Context): Path = context.filesDir.resolve("s39-quarantine").toPath()
+    // Normalize the trusted framework directory, never a potentially replaced quarantine/journal leaf.
+    fun quarantineRoot(context: Context): Path = context.filesDir.canonicalFile.resolve("s39-quarantine").toPath()
+    private fun journal(context: Context) = NovelFileInstallJournal(context.filesDir.canonicalFile.resolve("s39-install-journal").toPath())
+
+    /** Expected request metadata only; callers must still obtain a fresh coordinator grant. */
+    fun recordedRequest(context: Context, operationId: String): NovelInstallRecord? =
+        (journal(context).read(operationId) as? NovelInstallJournalRead.Found)?.record
+
+    /** Snapshot only; this must never load or instantiate extension code. */
+    fun observeLoaded(extensions: List<Extension.Loaded>) {
+        recognized = extensions.filter { it.sources.any { source -> source is NovelSourceAdapter } }
+            .map { it.pkgName to it.versionCode }.toSet()
+    }
+
+    fun status(context: Context, operationId: String): NovelInstallOutcome {
+        val record = (journal(context).read(operationId) as? NovelInstallJournalRead.Found)?.record
+            ?: return NovelInstallOutcome(operationId, NovelInstallPhase.RECOVERY_REQUIRED, NovelInstallFailure.JOURNAL)
+        return if (record.androidResult == NovelInstallCallbackStatus.SUCCESS) {
+            get(context).reconcile(operationId)
+        } else {
+            NovelInstallOutcome(operationId, record.phase, record.failure)
+        }
+    }
+
+    fun authorizeExecution(
+        context: Context,
+        operationId: String,
+        packageName: String,
+        versionCode: Long,
+    ): NovelExecutionConsentOutcome {
+        val record = (journal(context).read(operationId) as? NovelInstallJournalRead.Found)?.record
+            ?: return NovelExecutionConsentOutcome.DENIED
+        if (record.packageName != packageName || record.versionCode != versionCode) return NovelExecutionConsentOutcome.DENIED
+        return get(context).authorizeExecution(operationId, true)
+    }
 
     @Synchronized
     fun get(context: Context): NovelInteractiveInstallCoordinator {
@@ -18,10 +55,9 @@ internal object NovelInteractiveInstallRuntime {
             inspector::inspect,
             NovelInstalledPackageReader(app),
             NovelExecutionBarrier.store(app),
-            NovelFileInstallJournal(app.filesDir.resolve("s39-install-journal").toPath()),
-            NovelAndroidInstallBridge(app),
-            // Until host recognition is actually observed, success is always explicitly unrecognized.
-            NovelInstallRecognition { _, _ -> false },
+            journal(app),
+            NovelAndroidInstallBridge.forQaExperiment(app),
+            NovelInstallRecognition { packageName, versionCode -> packageName to versionCode in recognized },
         ).also { coordinator = it }
     }
 }

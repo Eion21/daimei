@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/s39_qa_app_name"
+        tools:replace="android:label">
+
+        <!-- QA keeps its own launcher, not the ordinary reader\'s external repository/backup links. -->
+        <activity
+            android:name="eu.kanade.tachiyomi.ui.main.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Tachiyomi.SplashScreen"
+            tools:node="replace">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- Retain internal components without registering shared external search/OAuth routes. -->
+        <activity
+            android:name="eu.kanade.tachiyomi.ui.deeplink.DeepLinkActivity"
+            android:exported="false"
+            android:label="@string/action_search"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.NoDisplay"
+            tools:node="replace">
+            <meta-data
+                android:name="android.app.searchable"
+                android:resource="@xml/searchable" />
+        </activity>
+        <activity
+            android:name="eu.kanade.tachiyomi.ui.setting.track.TrackLoginActivity"
+            android:exported="false"
+            android:label="@string/track_activity_name"
+            tools:node="replace" />
+        <activity
+            android:name="eu.kanade.tachiyomi.ui.reader.ReaderActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            tools:node="replace" />
+    </application>
+</manifest>

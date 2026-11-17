@@ -153,6 +153,36 @@ internal class NovelExecutionHoldStoreTest {
         }
     }
 
+    @Test fun `renewal refuses mismatched tuple active operation and unavailable package`() {
+        val s = store()
+        val journal = NovelFileInstallJournal(temp.resolve("journal"))
+        val old = NovelInstallRecord(
+            "op", "d".repeat(64), pkg, 7, setOf(a, b), temp.resolve("artifact").toString(), 1, "c".repeat(64),
+        )
+        assertTrue(journal.insert(old))
+        assertTrue(enroll(s))
+        val next = old.copy(operationId = "new", nonce = "e".repeat(64))
+        val absent = NovelInstalledPackages { NovelInstalledRead.Absent }
+        assertFalse(s.renewRejected(next, journal, absent))
+        val terminal = old.copy(phase = NovelInstallPhase.CANCELLED, revision = 1)
+        assertTrue(journal.replace(old, terminal))
+        for (invalid in listOf(
+            next.copy(versionCode = 8), next.copy(currentSigners = setOf(a)),
+            next.copy(artifactSha256 = "f".repeat(64)), next.copy(nonce = old.nonce),
+            next.copy(explicitInstallConsent = false), next.copy(packageName = "app.novel.other"),
+        )) {
+            assertFalse(s.renewRejected(invalid, journal, absent))
+        }
+        assertFalse(s.renewRejected(next, journal, NovelInstalledPackages { NovelInstalledRead.Unavailable }))
+        assertEquals(NovelInstallJournalRead.Found(terminal), journal.read("op"))
+        assertFalse(s.permits(pkg, 7, signers(a, b)))
+        assertTrue(s.renewRejected(next, journal, absent))
+        assertFalse(s.renewRejected(next.copy(operationId = "racer"), journal, absent))
+        assertFalse(s.reconcile("op", facts()))
+        assertFalse(s.grantExecution("op", facts(), true))
+        assertFalse(s.permits(pkg, 7, signers(a, b)))
+    }
+
     @Test fun `invalid version refused and old packages need no modern observation`() {
         val s = store()
         assertTrue(s.permits(pkg, 0, NovelPackageSigners(NovelSignerObservation.UNAVAILABLE)))

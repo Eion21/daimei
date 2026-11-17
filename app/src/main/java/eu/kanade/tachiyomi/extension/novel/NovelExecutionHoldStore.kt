@@ -209,6 +209,31 @@ internal class NovelExecutionHoldStore(
         } ?: false
     }
 
+    /** Rebind only an unreconciled DENY whose exact prior journal operation is terminal. */
+    internal fun renewRejected(record: NovelInstallRecord, journal: NovelInstallJournal, installed: NovelInstalledPackages): Boolean {
+        val candidate = Record(
+            record.operationId, record.packageName, record.versionCode, record.currentSigners.toSet(),
+            record.artifactSha256, false, false,
+        )
+        if (!valid(candidate) || !record.priorAbsent || !record.explicitInstallConsent ||
+            record.phase != NovelInstallPhase.PREPARING
+        ) return false
+        return locked {
+            val old = read(record.packageName) ?: return@locked false
+            if (old.reconciled || old.op == candidate.op || old.copy(op = candidate.op) != candidate) return@locked false
+            val prior = (journal.read(old.op) as? NovelInstallJournalRead.Found)?.record ?: return@locked false
+            if (prior.operationId != old.op || prior.packageName != old.pkg || prior.versionCode != old.version ||
+                prior.currentSigners != old.signers || prior.artifactSha256 != old.hash || prior.nonce == record.nonce ||
+                !prior.priorAbsent || !prior.explicitInstallConsent ||
+                (prior.phase != NovelInstallPhase.CANCELLED && prior.phase != NovelInstallPhase.FAILED) ||
+                installed.read(record.packageName) != NovelInstalledRead.Absent
+            ) return@locked false
+            write(candidate)
+            epoch.leases.remove(path(record.packageName).toString())
+            true
+        } ?: false
+    }
+
     private fun matches(r: Record, op: String, facts: NovelInstalledPackageFacts) =
         r.op == op &&
             r.pkg == facts.packageName &&

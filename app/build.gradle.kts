@@ -89,6 +89,9 @@ android {
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
+        buildConfigField("boolean", "S39_INSTALL_EXPERIMENT", "false")
+        buildConfigField("String", "S39_FIXTURE_APK_SHA256", "\"\"")
+        buildConfigField("String", "S39_FIXTURE_SIGNERS", "\"\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -129,6 +132,24 @@ android {
                 .get()
             applicationIdSuffix = if (s28Isolated) ".dev.s28" else ".dev"
             isPseudoLocalesEnabled = true
+        }
+        // Local ARM64-only QA: ./gradlew :app:assembleS39Qa. Never installs or enables S39.
+        create("s39Qa") {
+            initWith(debug)
+            // Replace the inherited suffix, including when s28Isolated is enabled.
+            applicationIdSuffix = ".dev.s39qa"
+            matchingFallbacks.add("debug")
+            val apk = providers.gradleProperty("s39FixtureApkSha256").orElse("").get()
+            val signers = providers.gradleProperty("s39FixtureSignerSha256s").orElse("").get()
+            val hex = Regex("[0-9a-f]{64}")
+            val validApk = apk.takeIf(hex::matches).orEmpty()
+            val validSigners = signers.takeIf { value ->
+                val parts = value.split(',')
+                parts.size in 1..16 && parts.toSet().size == parts.size && parts.all(hex::matches)
+            }.orEmpty()
+            buildConfigField("boolean", "S39_INSTALL_EXPERIMENT", "true")
+            buildConfigField("String", "S39_FIXTURE_APK_SHA256", "\"$validApk\"")
+            buildConfigField("String", "S39_FIXTURE_SIGNERS", "\"$validSigners\"")
         }
         val release = getByName("release") {
             isMinifyEnabled = true
@@ -502,6 +523,15 @@ androidComponents {
     // https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/variant/HasHostTestsBuilder
     beforeVariants(selector().withBuildType("release")) {
         it.hostTests.getValue(HostTestBuilder.UNIT_TEST_TYPE).enable = true
+    }
+
+    onVariants(selector().withBuildType("s39Qa")) { variant ->
+        // Keep the shared ABI configuration unchanged for ordinary debug/S28 and release.
+        variant.outputs.forEach { output ->
+            output.enabled.set(
+                output.filters.any { it.filterType.toString() == "ABI" && it.identifier == "arm64-v8a" },
+            )
+        }
     }
 
     onVariants { variant ->

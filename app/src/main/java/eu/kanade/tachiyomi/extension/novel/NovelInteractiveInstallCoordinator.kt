@@ -6,7 +6,7 @@ import java.nio.file.StandardOpenOption.READ
 
 /**
  * NEW-only, controlled orchestration. The final Android bridge cannot dispatch installation.
- * No path in this coordinator grants execution: the durable hold outlives success, failure and restart.
+ * Execution requires separate explicit consent; durable state remains DENY across process restart.
  */
 internal class NovelInteractiveInstallCoordinator(
     private val inspect: (NovelQuarantinedArtifact, NovelDistributionEntry) -> NovelInspectionResult,
@@ -23,6 +23,53 @@ internal class NovelInteractiveInstallCoordinator(
     },
 ) {
     private data class Request(val artifact: NovelQuarantinedArtifact, val expected: NovelDistributionEntry)
+
+    /** Permission to request installation only; archive signer declarations are not verified signatures. */
+    private class RequestAuthority private constructor(val metadata: NovelArchiveMetadata) {
+        companion object {
+            fun inspect(
+                request: Request,
+                inspect: (NovelQuarantinedArtifact, NovelDistributionEntry) -> NovelInspectionResult,
+            ): RequestAuthority? = try {
+                val observed = inspect(request.artifact, request.expected) as? NovelInspectionResult.Observed
+                val signers = observed?.metadata?.signers
+                if (observed != null && NovelDistributionCatalogCodec.isValidExpectation(request.expected) &&
+                    observed.layout.packageName == request.expected.packageName &&
+                    observed.metadata.packageName == request.expected.packageName &&
+                    observed.metadata.longVersionCode == request.expected.longVersionCode &&
+                    signers != null && signers.hasCompleteCurrent &&
+                    signers.current == request.expected.currentSigners &&
+                    signers.history.all { it in signers.current }
+                ) RequestAuthority(observed.metadata) else null
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /** A correlated success plus a fresh installed package observation, never execution consent. */
+    private class InstalledResult private constructor(val facts: NovelInstalledPackageFacts) {
+        companion object {
+            fun observe(record: NovelInstallRecord, installed: NovelInstalledPackages): InstalledResult? {
+                return try {
+                    if (!record.commitRequested || record.sessionId == null ||
+                        record.streamedSha256 != record.artifactSha256 ||
+                        record.androidResult != NovelInstallCallbackStatus.SUCCESS ||
+                        record.phase == NovelInstallPhase.CANCELLED || record.phase == NovelInstallPhase.FAILED
+                    ) return null
+                    val facts = (installed.read(record.packageName) as? NovelInstalledRead.Present)?.facts ?: return null
+                    if (facts.packageName == record.packageName && facts.longVersionCode == record.versionCode &&
+                        facts.origin == NovelInstallOrigin.SHARED && !facts.split && facts.signers.hasCompleteCurrent &&
+                        facts.signers.current == record.currentSigners &&
+                        facts.signers.history.all { it in facts.signers.current }
+                    ) InstalledResult(facts) else null
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
     private val requests = mutableMapOf<String, Request>()
     private val confirmations = mutableMapOf<String, NovelInstallUserConfirmation>()
 
@@ -45,19 +92,7 @@ internal class NovelInteractiveInstallCoordinator(
     } catch (_: Exception) {
         false
     }
-    private fun inspection(request: Request): NovelInspectionResult.Observed? = try {
-        val value = inspect(request.artifact, request.expected) as? NovelInspectionResult.Observed
-        value?.takeIf {
-            NovelDistributionCatalogCodec.isValidExpectation(request.expected) &&
-                it.layout.packageName == request.expected.packageName &&
-                it.metadata.packageName == request.expected.packageName &&
-                it.metadata.longVersionCode == request.expected.longVersionCode &&
-                it.metadata.signers.hasCompleteCurrent &&
-                it.metadata.signers.current == request.expected.currentSigners
-        }
-    } catch (_: Exception) {
-        null
-    }
+    private fun inspection(request: Request): RequestAuthority? = RequestAuthority.inspect(request, inspect)
     private fun matchesRequest(r: NovelInstallRecord, request: Request): Boolean =
         r.artifactPath == request.artifact.path.toString() && r.artifactSize == request.expected.size &&
             r.artifactSha256 == request.expected.sha256 && r.packageName == request.expected.packageName &&
@@ -65,7 +100,7 @@ internal class NovelInteractiveInstallCoordinator(
 
     private fun abandon(r: NovelInstallRecord): Boolean = try {
         val session = r.sessionId
-        session == null || (bridge.ownsSession(session, r.packageName) && bridge.abandonSession(session))
+        session == null || bridge.abandonSession(session)
     } catch (_: Exception) {
         false
     }
@@ -112,7 +147,7 @@ internal class NovelInteractiveInstallCoordinator(
                 record.versionCode,
                 record.currentSigners,
                 record.artifactSha256,
-            )
+            ) && !(holds is NovelExecutionHoldStore && holds.renewRejected(record, journal, installed))
         ) {
             return fail(record, NovelInstallFailure.HOLD)
         }
@@ -208,20 +243,9 @@ internal class NovelInteractiveInstallCoordinator(
         }
     }
 
-    private fun installedFacts(r: NovelInstallRecord): NovelInstalledPackageFacts? {
-        val facts = (installed.read(r.packageName) as? NovelInstalledRead.Present)?.facts ?: return null
-        return facts.takeIf {
-            it.packageName == r.packageName && it.longVersionCode == r.versionCode &&
-                it.origin == NovelInstallOrigin.SHARED && !it.split && it.signers.hasCompleteCurrent &&
-                it.signers.current == r.currentSigners
-        }
-    }
     private fun observeInstalled(record: NovelInstallRecord): NovelInstallOutcome {
-        val facts = try {
-            installedFacts(record)
-        } catch (_: Exception) {
-            null
-        } ?: return fail(record, NovelInstallFailure.INSTALLED_IDENTITY, NovelInstallPhase.RECOVERY_REQUIRED, false)
+        val facts = InstalledResult.observe(record, installed)?.facts
+            ?: return fail(record, NovelInstallFailure.INSTALLED_IDENTITY, NovelInstallPhase.RECOVERY_REQUIRED, false)
         if (!holds.reconcile(record.operationId, facts)) {
             return fail(record, NovelInstallFailure.HOLD, NovelInstallPhase.RECOVERY_REQUIRED, false)
         }
@@ -323,13 +347,32 @@ internal class NovelInteractiveInstallCoordinator(
     }
 
     @Synchronized
+    fun authorizeExecution(op: String, explicitConsent: Boolean): NovelExecutionConsentOutcome {
+        val denied = NovelExecutionConsentOutcome.DENIED
+        if (!bridge.controlledTestActivation || !explicitConsent) return denied
+        val record = read(op) ?: return denied
+        if (record.phase != NovelInstallPhase.INSTALLED_HELD &&
+            record.phase != NovelInstallPhase.INSTALLED_UNRECOGNIZED
+        ) return denied
+        val result = InstalledResult.observe(record, installed) ?: return denied
+        return try {
+            if (holds.grantExecution(op, result.facts, true)) NovelExecutionConsentOutcome.GRANTED else denied
+        } catch (_: Exception) {
+            denied
+        }
+    }
+
+    @Synchronized
     fun reconcile(op: String): NovelInstallOutcome {
         if (!bridge.controlledTestActivation) return disabled(op)
         val r = read(op) ?: return error(op, NovelInstallFailure.JOURNAL)
         if (!r.commitRequested || r.phase == NovelInstallPhase.CANCELLED || r.phase == NovelInstallPhase.FAILED) {
             return outcome(r)
         }
-        // A restart can observe installed identity, but never replay submission, user action or trust.
+        if (r.androidResult != NovelInstallCallbackStatus.SUCCESS) {
+            return error(op, NovelInstallFailure.PROCESS_RESTART)
+        }
+        // Only a recorded correlated success permits observation after restart; never replay consent or trust.
         return observeInstalled(r)
     }
 }

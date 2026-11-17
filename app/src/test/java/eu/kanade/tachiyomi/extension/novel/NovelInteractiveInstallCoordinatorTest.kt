@@ -297,6 +297,113 @@ internal class NovelInteractiveInstallCoordinatorTest {
         }
     }
 
+    @Test fun `rejected installation permits a fresh explicitly consented attempt without execution`() {
+        val f = Fixture()
+        val journal = NovelFileInstallJournal(root.resolve("retry-journal"))
+        var attempts = 0
+        var nonces = 0
+        var recognitions = 0
+        val c = NovelInteractiveInstallCoordinator(
+            NovelApkInspector(root, 30, NovelArchiveMetadataPort { metadata })::inspect,
+            NovelInstalledPackages { f.installed },
+            f.holds,
+            journal,
+            f.bridge,
+            NovelInstallRecognition { _, _ -> recognitions++; false },
+            { "attempt-${++attempts}" },
+            { if (++nonces == 1) "b".repeat(64) else "c".repeat(64) },
+        )
+        val first = c.begin(f.artifact, f.expected, true)
+        assertEquals(NovelInstallOutcome("attempt-1", NovelInstallPhase.STAGED), first)
+        assertFalse(first.executionGranted)
+        f.assertHeld()
+        val submitted = c.submit("attempt-1")
+        assertEquals(NovelInstallOutcome("attempt-1", NovelInstallPhase.COMMITTING), submitted)
+        assertFalse(submitted.executionGranted)
+        var prompts = 0
+        val pending = c.onCallback(
+            NovelInstallCallback(
+                "attempt-1", "b".repeat(64), 11, NovelInstallCallbackStatus.PENDING_USER_ACTION,
+                NovelInstallUserConfirmation { prompts++; true },
+            ),
+        )
+        assertEquals(NovelInstallOutcome("attempt-1", NovelInstallPhase.PENDING_USER_ACTION), pending)
+        assertFalse(pending.executionGranted)
+        assertEquals(0, prompts)
+        val confirmed = c.confirmUserAction("attempt-1", true)
+        assertEquals(NovelInstallOutcome("attempt-1", NovelInstallPhase.PENDING_USER_ACTION), confirmed)
+        assertFalse(confirmed.executionGranted)
+        assertEquals(1, prompts)
+        val rejected = c.onCallback(
+            NovelInstallCallback("attempt-1", "b".repeat(64), 11, NovelInstallCallbackStatus.CANCELLED),
+        )
+        assertEquals(
+            NovelInstallOutcome("attempt-1", NovelInstallPhase.CANCELLED, NovelInstallFailure.ANDROID_FAILURE),
+            rejected,
+        )
+        assertFalse(rejected.executionGranted)
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("attempt-1", true))
+        f.assertHeld()
+        assertFalse(NovelExecutionHoldStore(f.holdRoot.toFile(), NovelExecutionEpoch()).permits(pkg, 7, metadata.signers))
+        val rejectedRecord = journal.read("attempt-1")
+        val noConsent = c.begin(f.artifact, f.expected, false)
+        assertEquals(NovelInstallOutcome(null, NovelInstallPhase.RECOVERY_REQUIRED, NovelInstallFailure.CONSENT_REQUIRED), noConsent)
+        assertFalse(noConsent.executionGranted)
+        assertEquals(rejectedRecord, journal.read("attempt-1"))
+        assertEquals(1, attempts)
+        assertEquals(1, f.bridge.created)
+        assertEquals(1, f.bridge.submissions)
+        f.assertHeld()
+
+        val second = c.begin(f.artifact, f.expected, true)
+        assertEquals(NovelInstallOutcome("attempt-2", NovelInstallPhase.STAGED), second)
+        assertFalse(second.executionGranted)
+        val secondRecord = (journal.read("attempt-2") as NovelInstallJournalRead.Found).record
+        assertEquals("c".repeat(64), secondRecord.nonce)
+        assertEquals(rejectedRecord, journal.read("attempt-1"))
+        assertEquals(2, attempts)
+        assertEquals(2, nonces)
+        assertEquals(2, f.bridge.created)
+        assertEquals(1, f.bridge.submissions)
+        assertEquals(1, f.bridge.abandoned)
+        assertEquals(0, recognitions)
+        val stale = c.onCallback(
+            NovelInstallCallback("attempt-1", "b".repeat(64), 11, NovelInstallCallbackStatus.SUCCESS),
+        )
+        assertEquals(rejected, stale)
+        assertEquals(rejectedRecord, journal.read("attempt-1"))
+        assertEquals(secondRecord, (journal.read("attempt-2") as NovelInstallJournalRead.Found).record)
+        assertEquals(0, recognitions)
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("attempt-1", true))
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("attempt-2", true))
+        f.assertHeld()
+        assertFalse(NovelExecutionHoldStore(f.holdRoot.toFile(), NovelExecutionEpoch()).permits(pkg, 7, metadata.signers))
+    }
+
+    @Test fun `active enrollment cannot be replaced by another consented request`() {
+        val f = Fixture()
+        val journal = NovelFileInstallJournal(root.resolve("active-journal"))
+        var attempts = 0
+        val c = NovelInteractiveInstallCoordinator(
+            NovelApkInspector(root, 30, NovelArchiveMetadataPort { metadata })::inspect,
+            NovelInstalledPackages { f.installed }, f.holds, journal, f.bridge,
+            NovelInstallRecognition { _, _ -> false }, { "active-${++attempts}" },
+            { if (attempts == 1) "b".repeat(64) else "c".repeat(64) },
+        )
+        assertEquals(NovelInstallPhase.STAGED, c.begin(f.artifact, f.expected, true).phase)
+        val before = journal.read("active-1")
+        assertEquals(NovelInstallFailure.CONSENT_REQUIRED, c.begin(f.artifact, f.expected, false).failure)
+        assertEquals(before, journal.read("active-1"))
+        val second = c.begin(f.artifact, f.expected, true)
+        assertEquals(NovelInstallPhase.FAILED, second.phase)
+        assertEquals(NovelInstallFailure.HOLD, second.failure)
+        assertEquals(before, journal.read("active-1"))
+        assertEquals(1, f.bridge.created)
+        assertEquals(0, f.bridge.submissions)
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("active-1", true))
+        f.assertHeld()
+    }
+
     @Test fun `foreign callbacks never mutate journal session or execution permission`() {
         val f = Fixture()
         val before = f.seed()
@@ -333,9 +440,24 @@ internal class NovelInteractiveInstallCoordinatorTest {
         f.assertHeld()
     }
 
-    @Test fun `restart reconciles actual package without resubmission or restored trust`() {
+    @Test fun `restart cannot reconcile installed package without correlated success`() {
+        val f = Fixture()
+        val before = f.seed()
+        f.installed = NovelInstalledRead.Present(f.facts())
+        val result = f.coordinator().reconcile("op")
+        assertEquals(NovelInstallPhase.RECOVERY_REQUIRED, result.phase)
+        assertEquals(NovelInstallFailure.PROCESS_RESTART, result.failure)
+        assertEquals(before, f.journal.current)
+        assertEquals(0, f.journal.writes)
+        assertEquals(0, f.bridge.created)
+        assertEquals(0, f.bridge.submissions)
+        f.assertHeld()
+    }
+
+    @Test fun `restart reconciles recorded success without resubmission or restored trust`() {
         val f = Fixture()
         f.seed()
+        f.journal.current = f.journal.current!!.copy(androidResult = NovelInstallCallbackStatus.SUCCESS)
         f.installed = NovelInstalledRead.Present(f.facts())
         val result = f.coordinator().reconcile("op")
         assertEquals(NovelInstallPhase.INSTALLED_HELD, result.phase)
@@ -426,6 +548,44 @@ internal class NovelInteractiveInstallCoordinatorTest {
         restarted.submit("op")
         assertEquals(0, f.bridge.submissions)
         f.assertHeld()
+    }
+
+    @Test fun `execution requires explicit consent and fresh installed identity after correlated success`() {
+        val f = Fixture()
+        f.seed()
+        val c = f.coordinator()
+        f.installed = NovelInstalledRead.Present(f.facts())
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("op", true))
+        f.assertHeld()
+        c.onCallback(f.callback(NovelInstallCallbackStatus.SUCCESS))
+        val before = f.journal.current
+        val writes = f.journal.writes
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("op", false))
+        f.installed = NovelInstalledRead.Present(f.facts(8))
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("op", true))
+        f.installed = NovelInstalledRead.Present(f.facts(signers = setOf("c".repeat(64))))
+        assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("op", true))
+        val rotated = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf(signer), setOf("c".repeat(64)))
+        val legacy = NovelPackageSigners(NovelSignerObservation.LEGACY_UNVERIFIED, legacy = setOf(signer))
+        for (invalid in listOf(
+            f.facts().copy(signers = rotated),
+            f.facts().copy(signers = legacy),
+            f.facts().copy(origin = NovelInstallOrigin.PRIVATE),
+            f.facts().copy(split = true),
+            f.facts().copy(packageName = "app.novel.other"),
+        )) {
+            f.installed = NovelInstalledRead.Present(invalid)
+            assertEquals(NovelExecutionConsentOutcome.DENIED, c.authorizeExecution("op", true))
+        }
+        assertEquals(before, f.journal.current)
+        assertEquals(writes, f.journal.writes)
+        f.assertHeld()
+        f.installed = NovelInstalledRead.Present(f.facts())
+        assertEquals(NovelExecutionConsentOutcome.GRANTED, c.authorizeExecution("op", true))
+        assertTrue(f.holds.permits(pkg, 7, metadata.signers))
+        assertEquals(before, f.journal.current)
+        assertEquals(writes, f.journal.writes)
+        assertFalse(NovelExecutionHoldStore(f.holdRoot.toFile(), NovelExecutionEpoch()).permits(pkg, 7, metadata.signers))
     }
 
     @Test fun `production activation cannot start a session or write journal and holds`() {

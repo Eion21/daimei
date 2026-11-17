@@ -3,6 +3,8 @@
 package eu.kanade.tachiyomi.extension
 
 import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.pm.PackageInfoCompat
 import app.novel.runtime.SourceRegistry
 import app.novel.source.api.NovelNetwork
 import dev.zacsweers.metro.AppScope
@@ -340,6 +342,26 @@ class ExtensionManager(
      */
     fun uninstallExtension(extension: Extension.Installed) {
         installer.uninstallApk(extension.pkgName)
+    }
+
+    /** Explicit post-consent reload. It grants no trust and observes only a loaded novel source. */
+    @Suppress("DEPRECATION")
+    internal suspend fun reloadNovelAfterExecutionConsent(packageName: String, versionCode: Long): Boolean {
+        fun matchesInstalled(): Boolean = try {
+            val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_CONFIGURATIONS)
+            val features = info.reqFeatures?.mapNotNull { it.name }.orEmpty()
+            info.packageName == packageName && versionCode > 0 &&
+                PackageInfoCompat.getLongVersionCode(info) == versionCode &&
+                "app.novel.extension" in features && "tachiyomi.extension" !in features
+        } catch (_: Exception) {
+            false
+        }
+        if (!matchesInstalled()) return false
+        loadExtensions()
+        if (!matchesInstalled()) return false
+        return loadedExtensionMapFlow.value[packageName]?.let { extension ->
+            extension.versionCode == versionCode && extension.sources.any { it is NovelSourceAdapter }
+        } == true
     }
 
     /**

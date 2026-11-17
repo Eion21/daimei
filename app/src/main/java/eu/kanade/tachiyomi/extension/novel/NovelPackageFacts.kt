@@ -85,4 +85,7 @@ internal interface NovelExecutionHolds {
     fun grantExecution(operationId: String, installed: NovelInstalledPackageFacts, explicitConsent: Boolean): Boolean
 
     fun permits(packageName: String, versionCode: Long, signers: NovelPackageSigners): Boolean
+
+    /** Revoke the process-local execution lease for an exact managed package/version. The durable record stays DENY. */
+    fun revokeExecution(packageName: String, versionCode: Long): Boolean
 }

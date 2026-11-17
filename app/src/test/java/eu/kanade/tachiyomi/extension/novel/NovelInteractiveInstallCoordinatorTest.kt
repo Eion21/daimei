@@ -596,4 +596,46 @@ internal class NovelInteractiveInstallCoordinatorTest {
         assertEquals(0, f.journal.writes)
         assertTrue(f.holds.permits(pkg, 7, metadata.signers))
     }
+
+    @Test fun `update proceeds only from shared nonsplit complete signer facts at a lower version`() {
+        val f = Fixture()
+        f.installed = NovelInstalledRead.Present(f.facts(version = 6))
+        val result = f.coordinator().begin(f.artifact, f.expected, true)
+        assertEquals(NovelInstallPhase.STAGED, result.phase)
+        assertEquals(1, f.bridge.created)
+        assertEquals(0, f.bridge.submissions)
+        assertFalse(result.executionGranted)
+        f.assertHeld()
+    }
+
+    @Test fun `update rejects private split legacy or higher installed facts before any session`() {
+        val legacy = NovelPackageSigners(NovelSignerObservation.LEGACY_UNVERIFIED, legacy = setOf(signer))
+        val unavailable = NovelPackageSigners(NovelSignerObservation.UNAVAILABLE)
+        for (facts in listOf<(Fixture) -> NovelInstalledPackageFacts>(
+            { it.facts(version = 6).copy(origin = NovelInstallOrigin.PRIVATE) },
+            { it.facts(version = 6).copy(split = true) },
+            { it.facts(version = 6).copy(signers = legacy) },
+            { it.facts(version = 6).copy(signers = unavailable) },
+            { it.facts(version = 8) },
+        )) {
+            val f = Fixture()
+            f.installed = NovelInstalledRead.Present(facts(f))
+            val outcome = f.coordinator().begin(f.artifact, f.expected, true)
+            assertEquals(NovelInstallFailure.NOT_NEW, outcome.failure)
+            assertEquals(0, f.journal.writes)
+            assertEquals(0, f.bridge.created)
+            assertEquals(0, f.bridge.submissions)
+        }
+    }
+
+    @Test fun `update with a mismatched signer set is rejected before any session`() {
+        val f = Fixture()
+        f.installed = NovelInstalledRead.Present(
+            f.facts(version = 6, signers = setOf(signer, "c".repeat(64))),
+        )
+        val outcome = f.coordinator().begin(f.artifact, f.expected, true)
+        assertEquals(NovelInstallFailure.NOT_NEW, outcome.failure)
+        assertEquals(0, f.journal.writes)
+        assertEquals(0, f.bridge.created)
+    }
 }

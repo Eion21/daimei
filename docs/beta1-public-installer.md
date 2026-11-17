@@ -43,6 +43,17 @@ extension packages signed with the pinned extensions certificate:
 The bridge delegates exact artifact and catalog validation to the existing coordinator,
 inspector and hold-store flow.
 
+## Updates
+
+A catalog entry whose package is already installed with a lower versionCode is shown as an
+update. An update proceeds only when the installed facts are for the exact requested
+package, shared (not private), not split, observed with a complete current signer set
+identical to the requested one, and at a strictly lower version; unknown, private, split,
+mismatched or same/higher-version facts reject before any session or journal mutation.
+Updates require a fresh execution lease, the old lease is not reused, and the hold store
+refuses a higher-version enroll that carries a different signer set, leaving the managed
+record and lease unchanged.
+
 ## Public identity and application updates
 
 Beta 1 keeps the established public package `app.daimei` and uses version `0.1.0-beta.1` / code `2` (previous local code `1`). The anonymous public GitHub release/tag preflight found neither published releases nor tags; this is not a claim about unknown sideloads. Debug (`.dev`), isolated QA (`.dev.s39qa`), foss, nightly and benchmark suffixes and signing remain unchanged. Never replace a Debug installation with an official signature.

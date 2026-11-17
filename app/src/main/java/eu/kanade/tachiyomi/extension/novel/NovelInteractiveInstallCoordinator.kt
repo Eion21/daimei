@@ -87,8 +87,30 @@ internal class NovelInteractiveInstallCoordinator(
         val next = new.copy(revision = old.revision + 1)
         return if (journal.replace(old, next)) next else null
     }
-    private fun absent(packageName: String): Boolean = try {
-        installed.read(packageName) == NovelInstalledRead.Absent
+    /**
+     * True only when the exact requested package is absent, or an installed version of that same package can
+     * be updated: shared (not private), not split, observed with a complete current signer set identical to the
+     * requested one, and at a strictly lower version. Unknown, private, split, mismatched or same/higher-version
+     * facts reject before any session is created or any journal/hold mutation is made.
+     */
+    private fun canInstallOrUpdate(
+        packageName: String,
+        newVersion: Long,
+        newSigners: Set<String>,
+    ): Boolean = try {
+        when (val r = installed.read(packageName)) {
+            is NovelInstalledRead.Absent -> true
+            is NovelInstalledRead.Present -> {
+                val facts = r.facts
+                facts.packageName == packageName &&
+                    facts.origin == NovelInstallOrigin.SHARED &&
+                    !facts.split &&
+                    facts.signers.hasCompleteCurrent &&
+                    facts.signers.current == newSigners &&
+                    facts.longVersionCode < newVersion
+            }
+            else -> false
+        }
     } catch (_: Exception) {
         false
     }
@@ -129,7 +151,9 @@ internal class NovelInteractiveInstallCoordinator(
         if (!explicitConsent) return error(null, NovelInstallFailure.CONSENT_REQUIRED)
         val request = Request(artifact, expected)
         val observed = inspection(request) ?: return error(null, NovelInstallFailure.INVALID_ARTIFACT)
-        if (!absent(observed.metadata.packageName)) return error(null, NovelInstallFailure.NOT_NEW)
+        if (!canInstallOrUpdate(observed.metadata.packageName, observed.metadata.longVersionCode, observed.metadata.signers.current)) {
+            return error(null, NovelInstallFailure.NOT_NEW)
+        }
         val record = NovelInstallRecord(
             operationId(),
             nonce(),
@@ -162,7 +186,9 @@ internal class NovelInteractiveInstallCoordinator(
                 return change(record, record.copy(phase = NovelInstallPhase.PERMISSION_REQUIRED))?.let(::outcome)
                     ?: error(record.operationId, NovelInstallFailure.JOURNAL)
             }
-            if (!absent(record.packageName)) return fail(record, NovelInstallFailure.STALE_PACKAGE)
+            if (!canInstallOrUpdate(record.packageName, record.versionCode, record.currentSigners)) {
+                return fail(record, NovelInstallFailure.STALE_PACKAGE)
+            }
             if (!matchesRequest(record, request) || inspection(request) == null) {
                 return fail(record, NovelInstallFailure.INVALID_ARTIFACT)
             }
@@ -206,7 +232,9 @@ internal class NovelInteractiveInstallCoordinator(
         val request = requests[op] ?: return error(op, NovelInstallFailure.PROCESS_RESTART)
         if (record.sessionId == null) return stage(record, request)
         if (!bridge.hasInstallPermission()) return outcome(record)
-        if (!absent(record.packageName)) return fail(record, NovelInstallFailure.STALE_PACKAGE)
+        if (!canInstallOrUpdate(record.packageName, record.versionCode, record.currentSigners)) {
+            return fail(record, NovelInstallFailure.STALE_PACKAGE)
+        }
         if (inspection(request) == null) return fail(record, NovelInstallFailure.INVALID_ARTIFACT)
         return change(record, record.copy(phase = NovelInstallPhase.STAGED, failure = null))?.let(::outcome)
             ?: error(op, NovelInstallFailure.JOURNAL)
@@ -223,7 +251,9 @@ internal class NovelInteractiveInstallCoordinator(
                 return change(record, record.copy(phase = NovelInstallPhase.PERMISSION_REQUIRED))?.let(::outcome)
                     ?: error(op, NovelInstallFailure.JOURNAL)
             }
-            if (!absent(record.packageName)) return fail(record, NovelInstallFailure.STALE_PACKAGE)
+            if (!canInstallOrUpdate(record.packageName, record.versionCode, record.currentSigners)) {
+                return fail(record, NovelInstallFailure.STALE_PACKAGE)
+            }
             if (!matchesRequest(record, request) || inspection(request) == null) {
                 return fail(record, NovelInstallFailure.INVALID_ARTIFACT)
             }
@@ -315,7 +345,9 @@ internal class NovelInteractiveInstallCoordinator(
         if (!explicitConsent) return error(op, NovelInstallFailure.CONSENT_REQUIRED)
         val record = read(op) ?: return error(op, NovelInstallFailure.JOURNAL)
         if (record.phase != NovelInstallPhase.PENDING_USER_ACTION || record.actionPresented) return outcome(record)
-        if (!absent(record.packageName)) return fail(record, NovelInstallFailure.STALE_PACKAGE)
+        if (!canInstallOrUpdate(record.packageName, record.versionCode, record.currentSigners)) {
+            return fail(record, NovelInstallFailure.STALE_PACKAGE)
+        }
         val session = record.sessionId ?: return error(op, NovelInstallFailure.SESSION)
         if (!bridge.ownsSession(session, record.packageName)) return error(op, NovelInstallFailure.SESSION)
         val confirmation = confirmations.remove(op)

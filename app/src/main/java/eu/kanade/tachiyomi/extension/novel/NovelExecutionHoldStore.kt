@@ -203,6 +203,14 @@ internal class NovelExecutionHoldStore(
             if (old == null) {
                 write(candidate)
                 true
+            } else if (old.version < candidate.version) {
+                // Monotonic update from the same publisher only: a higher version carrying a different
+                // signer set is a rebind attempt and is rejected without touching the lease or the record.
+                if (old.signers != candidate.signers) return@locked false
+                // Monotonic update: the old lease does not carry over; a fresh grant is required.
+                epoch.leases.remove(path(packageName).toString())
+                write(candidate)
+                true
             } else {
                 old.copy(reconciled = false, granted = false) == candidate
             }
@@ -289,4 +297,19 @@ internal class NovelExecutionHoldStore(
         isShared && r.reconciled && epoch.leases[path(packageName).toString()] == r &&
             r.version == versionCode && signers.hasCompleteCurrent && r.signers == signers.current
     } ?: false
+
+    override fun revokeExecution(packageName: String, versionCode: Long): Boolean {
+        if (!validPackage(packageName) || versionCode <= 0) return false
+        return synchronized(localLock) {
+            locked {
+                val r = read(packageName) ?: return@locked false
+                if (r.version != versionCode) return@locked false
+                // Retain the durable record and make sure it stays DENY.
+                if (r.granted) write(r.copy(granted = false))
+                // Remove the process-local lease only after the durable state is DENY.
+                epoch.leases.remove(path(packageName).toString())
+                true
+            } ?: false
+        }
+    }
 }

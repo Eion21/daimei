@@ -10,9 +10,9 @@ The human reports both stores passed `keytool -list` and `keytool -certreq` with
 
 ## Package without credentials
 
-Only after a future chosen commit contains this configuration, use a **fresh isolated checkout/worktree** at that commit. Do not rebuild over previously verified experimental APKs. Record the commit and resolve the generated names using each module's `build/outputs/apk/release/output-metadata.json`; do not guess file names or reuse an older signed output.
+The selected functional Beta1 source is `72ecd6dadb15a80c56de1d51e56fda2101a6cd37`; its isolated unsigned packaging and eight-output inspection have completed. See [the exact inputs and hashes](beta1-unsigned-handoff.md). For any later packaging, use a **fresh isolated checkout/worktree** at its deliberately selected commit. Do not rebuild over previously verified experimental APKs. Record the commit and resolve the generated names using each module's `build/outputs/apk/release/output-metadata.json`; do not guess file names or reuse an older signed output.
 
-From that isolated checkout, the future packaging commands are:
+The unsigned packaging task set used for this isolated candidate is:
 
 ```sh
 ./gradlew :app:assembleRelease
@@ -21,7 +21,7 @@ From that isolated checkout, the future packaging commands are:
     :novel-jabrascan-extension:assembleRelease
 ```
 
-The standalone extensions-source checkout uses the second command after its selected commit includes the mirrored configuration. No credentials are required for these unsigned Release packages. Packaging is NOT a signed release, an installation or permission to publish. No such packaging command was run as part of preparation.
+The standalone extensions-source checkout uses the second command after its selected commit includes the mirrored configuration. No credentials are required for these unsigned Release packages. Packaging is NOT a signed release, an installation or permission to publish. This packaging completed without signing; exact offline commands, model assertions and results are retained in `../odd/s39/public-release-readiness/functional-build-72ecd6d/`. The standalone export has95 source-parity files and local commit `4fe7e9835e5cac98e458290c320177175de451ed`; its current standalone Release task set was not rerun.
 
 ## Select exactly one identity
 

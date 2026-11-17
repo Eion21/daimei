@@ -1,3 +1,5 @@
+> Historical unsigned-preparation snapshot. The current signed publication candidate, exact local commits, CI restrictions and authentication steps are in [beta1-publish-ready.md](beta1-publish-ready.md). No remote publication has occurred.
+
 # Beta1 publication sequence — prepared, not authorized
 
 No push, remote tag, Release, official APK upload, catalog.json or CI signing is executed. Signed APKs must first come from the [human operation](beta1-human-signing.md) and pass the [read-only checker](../tools/signing/README.md). Do not publish the unsigned input hashes.

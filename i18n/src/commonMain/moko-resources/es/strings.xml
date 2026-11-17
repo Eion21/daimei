@@ -916,4 +916,39 @@
     <string name="pref_webtoon_vertical_navigator_on_left">Ubicar la interfaz de navegación en el margen izquierdo</string>
     <string name="novel_previous_chapter">Anterior: %1$s</string>
     <string name="novel_previous_chapter_load_error">No se pudo cargar el capítulo anterior.</string>
+
+    <!-- S39 distribution: separate consent for metadata, bytes, Android and execution. -->
+    <string name="s39_title">Distribución de novelas (S39)</string>
+    <string name="s39_explanation">Los repositorios de novelas de esquema 2 están separados de manga y del catálogo S38 de solo lectura. Cada origen de red y autorización de ejecución requiere tu consentimiento.</string>
+    <string name="s39_public_blocked">La instalación pública está deshabilitada. Solo una extensión desechable fijada en la compilación QA puede usar el instalador experimental; la prueba nativa sigue pendiente.</string>
+    <string name="s39_repository_url">URL HTTPS del catálogo de esquema 2</string>
+    <string name="s39_add_repository">Añadir y consultar repositorio</string>
+    <string name="s39_progress">Bytes descargados: %1$s</string>
+    <string name="s39_cancel_download">Cancelar descarga</string>
+    <string name="s39_error">Operación detenida: %1$s</string>
+    <string name="s39_empty">No hay entradas disponibles. Añadí y consultá un repositorio compatible.</string>
+    <string name="s39_version">Versión %1$s · código %2$s</string>
+    <string name="s39_origin">Origen del APK: %1$s</string>
+    <string name="s39_api">API de novelas: %1$s</string>
+    <string name="s39_download">Descargar y comprobar integridad</string>
+    <string name="s39_update_blocked">Las actualizaciones no son elegibles hasta verificar la instalación nueva nativa y la continuidad real de IDs de fuentes.</string>
+    <string name="s39_downloaded">Bytes con integridad comprobada: %1$s. No está instalado; las firmas declaradas por el archivo no son prueba criptográfica.</string>
+    <string name="s39_install">Solicitar instalación Android experimental</string>
+    <string name="s39_operation">Operación para %1$s · código %2$s</string>
+    <string name="s39_android_status">Fase Android: %1$s</string>
+    <string name="s39_execution_status">Ejecución / reconocimiento: %1$s</string>
+    <string name="s39_refresh">Consultar estado correlacionado</string>
+    <string name="s39_permission">Abrir ajustes de permiso de instalación</string>
+    <string name="s39_resume">Comprobar permiso y continuar</string>
+    <string name="s39_android_confirm">Abrir confirmación normal de Android</string>
+    <string name="s39_allow_execution">Revisar autorización de ejecución</string>
+    <string name="s39_installed">Extensiones de novelas instaladas</string>
+    <string name="s39_recognized">Fuente de novelas realmente cargada y registrada</string>
+    <string name="s39_not_recognized">Solo metadatos instalados; no está cargada ni reconocida</string>
+    <string name="s39_repository_consent">¿Añadir este destino HTTPS y enviar una consulta anónima? Esto no autoriza orígenes de APK, instalación ni ejecución.\n%1$s</string>
+    <string name="s39_artifact_consent">¿Descargar el APK seleccionado y verificar tamaño y SHA-256? No se instala ni ejecuta. Se autoriza únicamente este origen.\nPaquete: %1$s\nOrigen: %2$s</string>
+    <string name="s39_install_consent">¿Solicitar la instalación de la extensión desechable QA preparada y fijada en esta compilación? Se inspecciona otra vez el APK, se guarda un bloqueo DENY y sigue siendo necesaria la confirmación normal de Android. Esto no autoriza la ejecución de código.</string>
+    <string name="s39_execution_consent">¿Permitir que el código de este paquete y versión instalados se ejecute dentro de Daimei? Se vuelve a comprobar la identidad instalada y el conjunto completo de firmantes actuales. La autorización de ejecución dura este proceso; instalar en Android no la concede.\nPaquete: %1$s\nCódigo: %2$s\nConjunto SHA-256 de firmantes:\n%3$s</string>
+    <string name="s39_continue">Continuar</string>
+    <string name="s39_cancel">Cancelar</string>
 </resources>

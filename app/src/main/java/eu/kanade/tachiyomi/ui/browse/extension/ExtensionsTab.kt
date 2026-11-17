@@ -15,7 +15,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.ExtensionScreen
+import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
+import eu.kanade.tachiyomi.ui.browse.extension.novel.NovelDistributionScreen
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -42,7 +44,7 @@ fun extensionsTab(
             repositoryLabel = stringResource(MR.strings.novel_catalog_title),
             openFilter = { navigator.push(ExtensionFilterScreen()) },
             navigate = { navigator.push(it) },
-        ),
+        ) + AppBar.OverflowAction(stringResource(MR.strings.s39_title), { navigator.push(NovelDistributionScreen()) }),
         content = { contentPadding, _ ->
             val state by extensionsViewModel.state.collectAsStateWithLifecycle()
 

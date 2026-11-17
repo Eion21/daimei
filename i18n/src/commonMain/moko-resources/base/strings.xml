@@ -1125,4 +1125,39 @@
     <string name="donationCampaign.paragraph2">This app is based on Mihon, which is licensed under Apache 2.0. All credit for the original work goes to the Mihon team and contributors.</string>
     <string name="novel_previous_chapter">Previous: %1$s</string>
     <string name="novel_previous_chapter_load_error">Could not load the previous chapter.</string>
+
+    <!-- S39 distribution: separate consent for metadata, bytes, Android and execution. -->
+    <string name="s39_title">Novel distribution (S39)</string>
+    <string name="s39_explanation">Schema-2 novel repositories are separate from manga stores and the read-only S38 catalog. Every network origin and code-execution decision requires your consent.</string>
+    <string name="s39_public_blocked">Public installation is disabled. Only a build-pinned QA fixture may use the experimental Android installer; the native gate is still pending.</string>
+    <string name="s39_repository_url">HTTPS schema-2 catalog URL</string>
+    <string name="s39_add_repository">Add and query repository</string>
+    <string name="s39_progress">Downloaded bytes: %1$s</string>
+    <string name="s39_cancel_download">Cancel download</string>
+    <string name="s39_error">Operation stopped: %1$s</string>
+    <string name="s39_empty">No available entries. Add and query a compatible repository.</string>
+    <string name="s39_version">Version %1$s · code %2$s</string>
+    <string name="s39_origin">Artifact origin: %1$s</string>
+    <string name="s39_api">Novel API: %1$s</string>
+    <string name="s39_download">Download and check integrity</string>
+    <string name="s39_update_blocked">Updates are not eligible until the native NEW gate and actual source-ID continuity are verified.</string>
+    <string name="s39_downloaded">Integrity-checked bytes: %1$s. Not installed; archive signature declarations are not cryptographic proof.</string>
+    <string name="s39_install">Request experimental Android installation</string>
+    <string name="s39_operation">Operation for %1$s · code %2$s</string>
+    <string name="s39_android_status">Android phase: %1$s</string>
+    <string name="s39_execution_status">Execution / recognition: %1$s</string>
+    <string name="s39_refresh">Refresh correlated status</string>
+    <string name="s39_permission">Open installation permission settings</string>
+    <string name="s39_resume">Recheck permission and continue</string>
+    <string name="s39_android_confirm">Open normal Android confirmation</string>
+    <string name="s39_allow_execution">Review execution authorization</string>
+    <string name="s39_installed">Installed novel extensions</string>
+    <string name="s39_recognized">Novel source actually loaded and registered</string>
+    <string name="s39_not_recognized">Installed metadata only; not loaded or recognized</string>
+    <string name="s39_repository_consent">Add this HTTPS endpoint and send an anonymous catalog request? This does not authorize APK origins, installation or execution.\n%1$s</string>
+    <string name="s39_artifact_consent">Download the selected APK and verify size and SHA-256? No installation or execution occurs. Approve only this origin.\nPackage: %1$s\nOrigin: %2$s</string>
+    <string name="s39_install_consent">Request installation of the prepared build-pinned QA fixture? The APK is inspected again, a DENY hold is saved and normal Android confirmation is still required. This does not authorize code execution.</string>
+    <string name="s39_execution_consent">Allow code from this exact installed package and version to run inside Daimei? Fresh installed identity and the complete current signer set are checked again. Trust is process-local; an Android install alone does not grant it.\nPackage: %1$s\nCode: %2$s\nSigner SHA-256 set:\n%3$s</string>
+    <string name="s39_continue">Continue</string>
+    <string name="s39_cancel">Cancel</string>
 </resources>

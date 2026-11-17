@@ -34,6 +34,10 @@ The standalone extensions-source checkout uses the second command after its sele
 
 Keep package names, source IDs and versions as recorded in the selected source. Never sign QA/Debug as public Daimei. Inspect the unsigned input's manifest with the SDK's `aapt dump badging` and compare package/version/minSdk/targetSdk/ABI with the planned artifact BEFORE signing. Stop on an identity mismatch. Record the unsigned input SHA-256 and selected source commit.
 
+## Exact Beta1 operation
+
+The [five-profile human operation](beta1-human-signing.md) binds the definitive unsigned copies and expected signed output slots. Its launcher uses the console procedure below, one APK at a time; it was checked only for help/syntax/headless refusal, never executed for signing. The post-signing checker is read-only; real signed verification remains pending the human files.
+
 ## Future signing: direct private terminal only
 
 Run this only when actual artifact signing is authorized, from the human's **real, unrecorded terminal**. No pipe, `tee`, redirection, CI, IDE task panel, command substitution around apksigner, or agent runner. Never type a password into chat. Do not use `--ks-pass`, `--key-pass` or any `pass:`, `env:`, `file:` transport. Default apksigner prompting uses Java `Console.readPassword` only if a real console exists; otherwise it can fall back to plain stdin. That fallback is NOT acceptable.

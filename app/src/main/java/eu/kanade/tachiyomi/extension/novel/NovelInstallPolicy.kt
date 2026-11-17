@@ -26,8 +26,6 @@ internal sealed interface NovelInstallDecision {
 
 /** Policy eligibility is not installation authorization, signature verification, or Android consent. */
 internal object NovelInstallPolicy {
-    // Keep synchronized with ExtensionLoader.SUPPORTED_NOVEL_API_VERSIONS; tested against the host helper.
-    private val supportedApis = setOf("1.0", "1.1", "1.2", "1.3")
     private val digest = Regex("[0-9a-f]{64}")
     private val knownSources = mapOf(
         "app.novel.extension.matchanovels" to "matchanovels",
@@ -63,7 +61,7 @@ internal object NovelInstallPolicy {
                 (expected.sourceIds == null || expected.sourceIds == candidate.sourceIds),
             NovelInstallReason.EXPECTATION_MISMATCH,
         )
-        check(candidate.novelApi in supportedApis, NovelInstallReason.API)
+        check(NovelSupportedApiVersions.isSupported(candidate.novelApi), NovelInstallReason.API)
         val signers = candidate.currentSigners
         check(
             signers != null && signers.isNotEmpty() && signers.all(digest::matches) &&

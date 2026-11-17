@@ -1,0 +1,61 @@
+{
+  "protocol": "daimei-novel-distribution",
+  "schemaVersion": 2,
+  "repository": "Daimei-Extensions/extensions-repo",
+  "extensions": [
+    {
+      "packageName": "app.novel.extension.matchanovels",
+      "longVersionCode": 3,
+      "versionName": "1.0.2",
+      "novelApi": "1.1",
+      "entryClasses": [
+        "app.novel.extension.matchanovels.MatchaNovelsSource"
+      ],
+      "minSdk": 26,
+      "abis": null,
+      "sourceIds": [
+        "matchanovels"
+      ],
+      "currentSigners": [
+        "2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408"
+      ],
+      "artifact": null
+    },
+    {
+      "packageName": "app.novel.extension.skynovels",
+      "longVersionCode": 3,
+      "versionName": "1.0.2",
+      "novelApi": "1.1",
+      "entryClasses": [
+        "app.novel.extension.skynovels.SkyNovelsSource"
+      ],
+      "minSdk": 26,
+      "abis": null,
+      "sourceIds": [
+        "skynovels"
+      ],
+      "currentSigners": [
+        "2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408"
+      ],
+      "artifact": null
+    },
+    {
+      "packageName": "app.novel.extension.jabrascan",
+      "longVersionCode": 4,
+      "versionName": "1.0.3",
+      "novelApi": "1.3",
+      "entryClasses": [
+        "app.novel.extension.jabrascan.JabraScanSource"
+      ],
+      "minSdk": 26,
+      "abis": null,
+      "sourceIds": [
+        "jabrascan"
+      ],
+      "currentSigners": [
+        "2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408"
+      ],
+      "artifact": null
+    }
+  ]
+}

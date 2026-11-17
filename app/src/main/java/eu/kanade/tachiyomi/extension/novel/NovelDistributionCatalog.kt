@@ -88,6 +88,7 @@ object NovelDistributionCatalogCodec {
         return validText(entry.packageName) && name.matches(entry.packageName) &&
             entry.longVersionCode > 0 && validText(entry.versionName) &&
             validText(entry.novelApi) && apiVersion.matches(entry.novelApi) &&
+            NovelSupportedApiVersions.isSupported(entry.novelApi) &&
             entry.entryClasses.size in 1..16 && entry.entryClasses.distinct().size == entry.entryClasses.size &&
             entry.entryClasses.all { validText(it) && name.matches(it) } && entry.minSdk > 0 &&
             validText(entry.url) && uri.scheme == "https" && uri.host != null && uri.rawUserInfo == null &&
@@ -152,7 +153,7 @@ object NovelDistributionCatalogCodec {
                 val classes = e.strings("entryClasses", 16)
                 schema(classes.all(name::matches))
                 val api = e.text("novelApi")
-                schema(apiVersion.matches(api))
+                schema(NovelSupportedApiVersions.isSupported(api) && apiVersion.matches(api))
                 val sdk = e.positive("minSdk")
                 schema(sdk <= Int.MAX_VALUE)
                 val artifact = e.getValue("artifact").fields(setOf("url", "size", "sha256"))

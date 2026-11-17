@@ -92,7 +92,7 @@ internal class NovelApkInspector(
                 return reject(NovelInspectionError.IDENTITY_CONFLICT)
             }
             if (observed.split || layout is NovelStructuralLayout.Split) return reject(NovelInspectionError.SPLIT)
-            if (observed.novelApi !in setOf("1.0", "1.1", "1.2", "1.3") || observed.minSdk > deviceSdk ||
+            if (!NovelSupportedApiVersions.isSupported(observed.novelApi) || observed.minSdk > deviceSdk ||
                 deviceSdk < 26
             ) {
                 return reject(NovelInspectionError.UNSUPPORTED)

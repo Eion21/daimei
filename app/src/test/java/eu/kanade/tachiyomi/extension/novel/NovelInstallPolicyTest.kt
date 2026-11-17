@@ -111,6 +111,33 @@ class NovelInstallPolicyTest {
         evaluate(candidate = candidate(api = "9.9")),
     )
 
+    @Test fun `API 1-4 is rejected`() = rejects(
+        NovelInstallReason.API,
+        evaluate(candidate = candidate(api = "1.4")),
+    )
+
+    @Test fun `Jabra context-aware 1-3 candidate is eligible`() {
+        val pkg = "app.novel.extension.jabrascan"
+        val entry = NovelDistributionCatalogCodec.decode(
+            """{"protocol":"daimei-novel-distribution","schemaVersion":2,"repository":"example","extensions":[{"packageName":"$pkg","longVersionCode":2,"versionName":"2","novelApi":"1.3","entryClasses":["app.novel.extension.jabrascan.JabraScanSource"],"minSdk":26,"artifact":{"url":"https://example.invalid/a.apk","size":100,"sha256":"${NovelInstallEvidenceTestFixtures.hash}"},"currentSigners":["${NovelInstallEvidenceTestFixtures.signer}"]}]}""".byteInputStream(),
+        ).entries.single()
+        assertEquals(
+            NovelInstallDecision.Eligible,
+            evaluate(
+                entry = entry,
+                candidate = candidate(
+                    packageName = pkg,
+                    api = "1.3",
+                    classes = setOf("app.novel.extension.jabrascan.JabraScanSource"),
+                    sources = setOf("jabrascan"),
+                    layout = NovelApkLayout.STANDALONE,
+                ),
+                installed = installed(packageName = pkg, sources = setOf("jabrascan")),
+                trust = trust(packageName = pkg),
+            ),
+        )
+    }
+
     @Test fun `platform SDK is required and compatible`() = rejects(
         NovelInstallReason.COMPATIBILITY,
         evaluate(candidate = candidate(deviceSdk = 25)),

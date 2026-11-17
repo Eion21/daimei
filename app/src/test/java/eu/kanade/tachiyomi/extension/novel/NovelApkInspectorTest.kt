@@ -205,6 +205,24 @@ class NovelApkInspectorTest {
         assertArrayEquals(before, Files.readAllBytes(path))
     }
 
+    @Test fun `API 1-3 observed is accepted`() {
+        val jabraMetadata = metadata.copy(novelApi = "1.3")
+        val (path, artifact, expected) = fixture(expectation = jabraMetadata)
+        val before = Files.readAllBytes(path)
+        assertTrue(inspect(artifact, expected, jabraMetadata) is NovelInspectionResult.Observed)
+        assertArrayEquals(before, Files.readAllBytes(path))
+    }
+
+    @Test fun `API 1-4 observed is rejected`() {
+        val (path, artifact, expected) = fixture()
+        val before = Files.readAllBytes(path)
+        assertEquals(
+            NovelInspectionResult.Rejected(NovelInspectionError.UNSUPPORTED),
+            inspect(artifact, expected, metadata.copy(novelApi = "1.4")),
+        )
+        assertArrayEquals(before, Files.readAllBytes(path))
+    }
+
     @Test fun `unsupported api or device reject`() {
         val (path, artifact, expected) = fixture()
         val before = Files.readAllBytes(path)

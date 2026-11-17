@@ -10,6 +10,17 @@ internal object NovelExecutionBarrier {
         context: Context,
     ): NovelExecutionHolds = NovelExecutionHoldStore(File(context.filesDir, "s39-execution-holds"))
 
+    /**
+     * Dynamic lease check handed to a retained [eu.kanade.tachiyomi.source.novel.NovelSourceAdapter] after the
+     * loader gate. The platform identity is re-read on every call, so a revoked lease — or a restart over a
+     * durable DENY — blocks references that were already held when the revocation happened. A package the
+     * hold store has no record for answers permitted: those sources stay decided by the loader gate alone,
+     * exactly as before.
+     */
+    fun retainedSourceGuard(context: Context, info: PackageInfo, isShared: Boolean): () -> Boolean = {
+        permits(context, info, isShared)
+    }
+
     @Suppress("DEPRECATION")
     fun permits(
         context: Context,

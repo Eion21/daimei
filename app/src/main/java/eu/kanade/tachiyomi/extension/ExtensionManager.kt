@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallReceiver
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller
 import eu.kanade.tachiyomi.extension.util.ExtensionLoader
+import eu.kanade.tachiyomi.extension.novel.NovelExecutionBarrier
+import eu.kanade.tachiyomi.extension.novel.NovelExecutionHoldStore
 import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CompletableDeferred
@@ -362,6 +364,33 @@ class ExtensionManager(
         return loadedExtensionMapFlow.value[packageName]?.let { extension ->
             extension.versionCode == versionCode && extension.sources.any { it is NovelSourceAdapter }
         } == true
+    }
+
+    /**
+     * Revoke the process-local execution lease for an exact managed package/version, then reload
+     * so the source is retracted without uninstalling the extension or removing its data. The
+     * durable hold record stays DENY, so the package remains blocked after restart.
+     */
+    @Suppress("DEPRECATION")
+    internal suspend fun revokeNovelExecutionConsent(packageName: String, versionCode: Long): Boolean {
+        val info = try {
+            context.packageManager.getPackageInfo(packageName, PackageManager.GET_CONFIGURATIONS)
+        } catch (_: Exception) {
+            return false
+        }
+        val features = info.reqFeatures?.mapNotNull { it.name }.orEmpty()
+        if (info.packageName != packageName || versionCode <= 0 ||
+            PackageInfoCompat.getLongVersionCode(info) != versionCode ||
+            "app.novel.extension" !in features || "tachiyomi.extension" in features
+        ) {
+            return false
+        }
+        val store = NovelExecutionBarrier.store(context) as? NovelExecutionHoldStore ?: return false
+        if (!store.revokeExecution(packageName, versionCode)) return false
+        loadExtensions()
+        return loadedExtensionMapFlow.value[packageName]?.let { extension ->
+            extension.versionCode == versionCode && extension.sources.any { it is NovelSourceAdapter }
+        } != true
     }
 
     /**

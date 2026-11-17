@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.extension.novel.NovelExecutionBarrier
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.source.novel.NovelSourceAdapter
+import eu.kanade.tachiyomi.source.novel.novelSourceAdapterForLoadedExtension
 import eu.kanade.tachiyomi.util.lang.Hash
 import eu.kanade.tachiyomi.util.storage.copyAndSetReadOnlyTo
 import kotlinx.coroutines.Dispatchers
@@ -537,10 +538,16 @@ internal object ExtensionLoader {
 
                     when (obj) {
                         // A novel extension declares a NovelSource, which is neither a Source nor a SourceFactory.
-                        // The adapter turns it into the Source everything downstream already consumes, and it is
-                        // built only here, after the signature gate: the third-party class is instantiated strictly
-                        // after it has been proven signed and trusted.
-                        is NovelSource -> listOf(NovelSourceAdapter(obj))
+                        // The seam builds the adapter everything downstream already consumes, and it is reached
+                        // strictly after the signature gate: the third-party class is instantiated only after it
+                        // has been proven signed and trusted, and the seam is the one place that decides which
+                        // novel source instance the adapter and SourceRegistry both expose.
+                        is NovelSource -> listOf(
+                            novelSourceAdapterForLoadedExtension(
+                                obj,
+                                NovelExecutionBarrier.retainedSourceGuard(context, pkgInfo, extensionInfo.isShared),
+                            ),
+                        )
                         is Source -> listOf(obj)
                         is SourceFactory -> obj.createSources()
                         else -> throw Exception("Unknown source class type: ${obj.javaClass}")

@@ -54,6 +54,34 @@ Updates require a fresh execution lease, the old lease is not reused, and the ho
 refuses a higher-version enroll that carries a different signer set, leaving the managed
 record and lease unchanged.
 
+## End session / revocation
+
+The distribution screen exposes a visible **End execution session** action for loaded novel
+sources. Revocation:
+
+1. Removes the process-local epoch lease from `NovelExecutionHoldStore`.
+2. Keeps the durable hold record as DENY.
+3. Reloads extensions so the source is retracted without uninstall or data loss.
+4. Leaves the package blocked after process restart.
+
+`ExtensionManager.revokeNovelExecutionConsent(packageName, versionCode)` performs the
+managed retraction; a missing or mismatched managed record returns false without reloading,
+so unrelated sources are untouched, and the screen reports `REVOKE_FAILED` instead of
+marking a session ended that was not revoked.
+
+Revocation also blocks references that were already held when it happened, on every surface
+a novel source is exposed from. The loader seam (`novelSourceAdapterForLoadedExtension`, in
+`NovelSourceAdapter.kt`) builds one guarded `NovelSource` after the signature gate and after
+network/context binding, and that one instance is what both surfaces expose: it is the adapter's
+`novelSource` — which is exactly what `ExtensionManager.syncNovelSources` registers in
+`SourceRegistry` — so the reader's `GetChapterContent` path (`sourceRegistry.get`) and every
+adapter method re-check the dynamic lease before delegating. A retained reference therefore
+stops executing the moment its lease is revoked — chapter content included — while `info`
+(ids, names, language) stays readable and sources the hold store does not manage keep their
+loader-gate behavior unchanged. The plain adapter constructors keep the exact instance they
+are given; only the loader seam wraps. New registry lookups after the retraction also miss,
+because unregistration still runs.
+
 ## Public identity and application updates
 
 Beta 1 keeps the established public package `app.daimei` and uses version `0.1.0-beta.1` / code `2` (previous local code `1`). The anonymous public GitHub release/tag preflight found neither published releases nor tags; this is not a claim about unknown sideloads. Debug (`.dev`), isolated QA (`.dev.s39qa`), foss, nightly and benchmark suffixes and signing remain unchanged. Never replace a Debug installation with an official signature.

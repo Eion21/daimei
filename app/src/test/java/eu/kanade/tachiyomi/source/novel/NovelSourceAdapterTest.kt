@@ -6,6 +6,10 @@ import app.novel.source.api.NovelPage
 import app.novel.source.api.NovelSource
 import app.novel.source.api.SourceInfo
 import app.novel.source.demo.DemoSource
+import eu.kanade.tachiyomi.extension.novel.NovelExecutionHoldStore
+import eu.kanade.tachiyomi.extension.novel.NovelInstalledPackageFacts
+import eu.kanade.tachiyomi.extension.novel.NovelPackageSigners
+import eu.kanade.tachiyomi.extension.novel.NovelSignerObservation
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import kotlinx.coroutines.runBlocking
@@ -16,12 +20,17 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import tachiyomi.data.novel.NovelMapper
 import tachiyomi.domain.source.model.StubSource
 import app.novel.source.api.Chapter as NovelChapter
 import tachiyomi.domain.source.model.Source as DomainSource
+import java.nio.file.Path
 
 class NovelSourceAdapterTest {
+
+    @TempDir
+    lateinit var temp: Path
 
     private val adapter = NovelSourceAdapter(DemoSource())
 
@@ -245,6 +254,240 @@ class NovelSourceAdapterTest {
         assertFalse(novel.isNovelSource(emptySet()))
         assertFalse(DomainSource(1L, "en", "Other", true, false).isNovelSource(novelSourceIds))
     }
+
+    // --- Retained-reference execution guard (T14 correction: revocation must block held references) ---
+
+    /** [assertThrows] cannot take a suspending lambda, so blocked execution entries are asserted through this. */
+    private fun assertBlocked(executable: suspend () -> Unit): NovelExecutionRevokedException {
+        val error = runCatching { runBlocking { executable() } }.exceptionOrNull()
+        assertTrue(error is NovelExecutionRevokedException, "expected NovelExecutionRevokedException, got $error")
+        return error as NovelExecutionRevokedException
+    }
+
+    @Test
+    fun `retained adapter reference works under a valid lease and is blocked after revoke`() = runBlocking {
+        val store = NovelExecutionHoldStore(temp.resolve("holds").toFile())
+        val signers = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val pkg = "app.novel.extension.matchanovels"
+        val facts = NovelInstalledPackageFacts(pkg, 7L, "v7", signers)
+        val counter = CountingSource()
+        val adapter = NovelSourceAdapter(counter) { store.permits(pkg, 7L, signers) }
+
+        assertTrue(store.enroll("op", pkg, 7L, signers.current, "c".repeat(64)))
+        assertTrue(store.reconcile("op", facts))
+        assertTrue(store.grantExecution("op", facts, true))
+
+        // Under the current lease the held reference delegates normally.
+        assertEquals(1, adapter.getPopularManga(1).mangas.size)
+        assertEquals(1, counter.popular)
+
+        // Revoke the exact lease: the SAME retained reference must be blocked...
+        assertTrue(store.revokeExecution(pkg, 7L))
+        val error = assertBlocked { adapter.getPopularManga(1) }
+        // ...without any delegate side effects.
+        assertEquals(1, counter.popular)
+        assertEquals(0, counter.details)
+        assertEquals(0, counter.chapters)
+
+        // Every execution entry is blocked, not just the popular listing.
+        val manga = eu.kanade.tachiyomi.source.model.SManga.create().apply {
+            url = "n1"
+            title = "Held novel"
+        }
+        assertBlocked { adapter.getLatestUpdates(1) }
+        assertBlocked { adapter.getSearchManga(1, "q", FilterList()) }
+        assertBlocked { adapter.getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = true) }
+        assertBlocked { adapter.getPageList(Chapterless) }
+        assertEquals(1, counter.popular)
+        assertEquals(0, counter.details)
+        assertEquals(0, counter.chapters)
+
+        // Metadata stays readable on the blocked reference.
+        assertEquals(NovelMapper.generateSourceId(CountingSource.ID), adapter.id)
+        assertEquals("Counter", adapter.name)
+        assertEquals("es", adapter.lang)
+        assertTrue(adapter.supportsLatest)
+        // The blocked message names the reason without leaking the delegate.
+        assertTrue(error.message!!.contains("revoked"))
+    }
+
+    @Test
+    fun `an unrelated package keeps executing after one package is revoked`() = runBlocking {
+        val store = NovelExecutionHoldStore(temp.resolve("unrelated-holds").toFile())
+        val revokedSigners = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val otherSigners = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("d".repeat(64)))
+        val revokedPkg = "app.novel.extension.matchanovels"
+        val otherPkg = "app.novel.extension.skynovels"
+        val revokedFacts = NovelInstalledPackageFacts(revokedPkg, 7L, "v7", revokedSigners)
+        val otherFacts = NovelInstalledPackageFacts(otherPkg, 3L, "v3", otherSigners)
+
+        assertTrue(store.enroll("op-a", revokedPkg, 7L, revokedSigners.current, "c".repeat(64)))
+        assertTrue(store.enroll("op-b", otherPkg, 3L, otherSigners.current, "e".repeat(64)))
+        assertTrue(store.reconcile("op-a", revokedFacts))
+        assertTrue(store.reconcile("op-b", otherFacts))
+        assertTrue(store.grantExecution("op-a", revokedFacts, true))
+        assertTrue(store.grantExecution("op-b", otherFacts, true))
+
+        val revokedAdapter = NovelSourceAdapter(CountingSource()) { store.permits(revokedPkg, 7L, revokedSigners) }
+        val otherAdapter = NovelSourceAdapter(CountingSource()) { store.permits(otherPkg, 3L, otherSigners) }
+        assertEquals(1, revokedAdapter.getPopularManga(1).mangas.size)
+        assertEquals(1, otherAdapter.getPopularManga(1).mangas.size)
+
+        assertTrue(store.revokeExecution(revokedPkg, 7L))
+        assertBlocked { revokedAdapter.getPopularManga(1) }
+        // The unrelated package still executes through its own held reference.
+        assertEquals(1, otherAdapter.getPopularManga(1).mangas.size)
+    }
+
+    @Test
+    fun `a restarted process keeps the revoked reference blocked`() = runBlocking<Unit> {
+        val dir = temp.resolve("restart-holds").toFile()
+        val signers = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val pkg = "app.novel.extension.matchanovels"
+        val facts = NovelInstalledPackageFacts(pkg, 7L, "v7", signers)
+        val store = NovelExecutionHoldStore(dir)
+        assertTrue(store.enroll("op", pkg, 7L, signers.current, "c".repeat(64)))
+        assertTrue(store.reconcile("op", facts))
+        assertTrue(store.grantExecution("op", facts, true))
+        val adapter = NovelSourceAdapter(CountingSource()) { store.permits(pkg, 7L, signers) }
+        assertEquals(1, adapter.getPopularManga(1).mangas.size)
+        assertTrue(store.revokeExecution(pkg, 7L))
+
+        // A fresh store over the same durable directory is a process restart: still DENY.
+        val restarted = NovelExecutionHoldStore(dir)
+        assertFalse(restarted.permits(pkg, 7L, signers))
+        assertBlocked { adapter.getPopularManga(1) }
+    }
+
+    @Test
+    fun `an adapter without a guard keeps the legacy no-hold behavior`() = runBlocking {
+        val store = NovelExecutionHoldStore(temp.resolve("legacy-holds").toFile())
+        val signers = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val pkg = "app.novel.extension.matchanovels"
+        val facts = NovelInstalledPackageFacts(pkg, 7L, "v7", signers)
+        assertTrue(store.enroll("op", pkg, 7L, signers.current, "c".repeat(64)))
+        assertTrue(store.reconcile("op", facts))
+        assertTrue(store.grantExecution("op", facts, true))
+        assertTrue(store.revokeExecution(pkg, 7L))
+
+        val counter = CountingSource()
+        val unguarded = NovelSourceAdapter(counter)
+        // A source with no injected guard is decided by the loader gate alone, exactly as before.
+        assertEquals(1, unguarded.getPopularManga(1).mangas.size)
+        assertEquals(1, counter.popular)
+    }
+
+    // --- Loader seam: the raw novel source the reader resolves chapters through (T14 same-blocker correction) ---
+
+    @Test
+    fun `retained loader-seam source is blocked after revoke before any delegate side effect`() = runBlocking {
+        val store = NovelExecutionHoldStore(temp.resolve("seam-holds").toFile())
+        val signers = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val pkg = "app.novel.extension.matchanovels"
+        val facts = NovelInstalledPackageFacts(pkg, 7L, "v7", signers)
+        val raw = CountingSource()
+        val adapter = novelSourceAdapterForLoadedExtension(raw) { store.permits(pkg, 7L, signers) }
+        // The reader (GetChapterContent) resolves chapters through the registry-held instance, and the
+        // registry is handed exactly adapter.novelSource — so this is the reference a caller can retain.
+        val retained = adapter.novelSource
+
+        assertTrue(store.enroll("op", pkg, 7L, signers.current, "c".repeat(64)))
+        assertTrue(store.reconcile("op", facts))
+        assertTrue(store.grantExecution("op", facts, true))
+
+        // Captured WHILE allowed: the chapter-content path and a catalog call both work.
+        assertTrue(retained.getChapterContent(CountingSource.chapter).blocks.isEmpty())
+        assertEquals(1, raw.content)
+        assertEquals(1, retained.popular(1).novels.size)
+        assertEquals(1, raw.popular)
+
+        assertTrue(store.revokeExecution(pkg, 7L))
+
+        // The SAME retained reference is denied on every contract execution entry, reader path first...
+        assertBlocked { retained.getChapterContent(CountingSource.chapter) }
+        assertBlocked { retained.popular(1) }
+        assertBlocked { retained.search("q", 1) }
+        assertBlocked { retained.getNovelDetails(CountingSource.novel) }
+        assertBlocked { retained.getChapters(CountingSource.novel) }
+        // ...before any delegate side effect.
+        assertEquals(1, raw.content)
+        assertEquals(1, raw.popular)
+        assertEquals(0, raw.details)
+        assertEquals(0, raw.chapters)
+
+        // The seam exposes a guarded view, never the unguarded original.
+        assertTrue(retained !== raw, "loader seam must not hand out the raw source")
+        // Metadata stays readable on the blocked reference: same ids, same name.
+        assertEquals(CountingSource.ID, retained.info.id)
+        assertEquals("Counter", retained.info.name)
+        assertEquals(NovelMapper.generateSourceId(CountingSource.ID), adapter.id)
+    }
+
+    @Test
+    fun `loader-seam source stays blocked across restart and update while an unrelated lease still executes`() = runBlocking {
+        val dir = temp.resolve("seam-restart-holds").toFile()
+        val signers = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val otherSigners = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("d".repeat(64)))
+        val pkg = "app.novel.extension.matchanovels"
+        val otherPkg = "app.novel.extension.skynovels"
+        val store = NovelExecutionHoldStore(dir)
+        val facts = NovelInstalledPackageFacts(pkg, 7L, "v7", signers)
+        val otherFacts = NovelInstalledPackageFacts(otherPkg, 3L, "v3", otherSigners)
+        val retained = novelSourceAdapterForLoadedExtension(CountingSource()) { store.permits(pkg, 7L, signers) }
+            .novelSource
+        val unrelated = novelSourceAdapterForLoadedExtension(CountingSource()) { store.permits(otherPkg, 3L, otherSigners) }
+            .novelSource
+
+        assertTrue(store.enroll("op-a", pkg, 7L, signers.current, "c".repeat(64)))
+        assertTrue(store.enroll("op-b", otherPkg, 3L, otherSigners.current, "e".repeat(64)))
+        assertTrue(store.reconcile("op-a", facts))
+        assertTrue(store.reconcile("op-b", otherFacts))
+        assertTrue(store.grantExecution("op-a", facts, true))
+        assertTrue(store.grantExecution("op-b", otherFacts, true))
+        // Both leases execute while allowed.
+        assertTrue(retained.getChapterContent(CountingSource.chapter).blocks.isEmpty())
+        assertTrue(unrelated.getChapterContent(CountingSource.chapter).blocks.isEmpty())
+
+        assertTrue(store.revokeExecution(pkg, 7L))
+        assertBlocked { retained.getChapterContent(CountingSource.chapter) }
+
+        // A restarted process is a fresh store over the same durable directory: still DENY.
+        val restarted = NovelExecutionHoldStore(dir)
+        assertFalse(restarted.permits(pkg, 7L, signers))
+        assertBlocked { retained.getChapterContent(CountingSource.chapter) }
+
+        // A monotonic version update revokes nothing implicitly: the old reference stays blocked until a
+        // fresh grant for the new version exists, and its exact-version guard still answers false.
+        assertTrue(restarted.enroll("op-c", pkg, 8L, signers.current, "f".repeat(64)))
+        assertFalse(restarted.permits(pkg, 7L, signers))
+        assertBlocked { retained.getChapterContent(CountingSource.chapter) }
+
+        // The unrelated leased source keeps executing throughout.
+        assertTrue(unrelated.getChapterContent(CountingSource.chapter).blocks.isEmpty())
+    }
+
+    @Test
+    fun `legacy adapter constructors keep the original source instance and behavior`() = runBlocking {
+        val store = NovelExecutionHoldStore(temp.resolve("seam-legacy-holds").toFile())
+        val signers = NovelPackageSigners(NovelSignerObservation.MODERN_COMPLETE, setOf("a".repeat(64)))
+        val pkg = "app.novel.extension.matchanovels"
+        val facts = NovelInstalledPackageFacts(pkg, 7L, "v7", signers)
+        val raw = CountingSource()
+
+        // Only the loader seam may hand out a guarded view; both plain constructors keep the exact instance.
+        assertTrue(NovelSourceAdapter(raw).novelSource === raw)
+        val guardedAdapter = NovelSourceAdapter(raw) { store.permits(pkg, 7L, signers) }
+        assertTrue(guardedAdapter.novelSource === raw)
+
+        assertTrue(store.enroll("op", pkg, 7L, signers.current, "c".repeat(64)))
+        assertTrue(store.reconcile("op", facts))
+        assertTrue(store.grantExecution("op", facts, true))
+        assertTrue(store.revokeExecution(pkg, 7L))
+
+        // The adapter-level blocking from the first correction still holds for the plain constructor.
+        assertBlocked { guardedAdapter.getPopularManga(1) }
+        assertEquals(0, raw.popular)
+    }
 }
 
 /**
@@ -280,4 +523,59 @@ private class FixtureSource(private val coverUrl: String? = null) : NovelSource 
             url = "https://example.test/ch-1",
         )
     }
+}
+
+/**
+ * A [NovelSource] that counts every delegate invocation, so a test can prove a blocked call never
+ * reached the wrapped source.
+ */
+private class CountingSource : NovelSource {
+
+    var popular = 0
+        private set
+    var details = 0
+        private set
+    var chapters = 0
+        private set
+    var content = 0
+        private set
+
+    override val info = SourceInfo(ID, "Counter", "1", "es")
+
+    override suspend fun popular(page: Int): NovelPage {
+        popular++
+        return NovelPage(listOf(novel), hasNextPage = false)
+    }
+
+    override suspend fun search(query: String, page: Int): NovelPage {
+        popular++
+        return NovelPage(listOf(novel), hasNextPage = false)
+    }
+
+    override suspend fun getNovelDetails(novel: Novel): Novel {
+        details++
+        return novel
+    }
+
+    override suspend fun getChapters(novel: Novel): List<NovelChapter> {
+        chapters++
+        return listOf(chapter)
+    }
+
+    override suspend fun getChapterContent(chapter: NovelChapter): ChapterContent {
+        content++
+        return ChapterContent(emptyList())
+    }
+
+    companion object {
+        const val ID = "counter"
+        val novel = Novel(ID, "n1", "Held novel")
+        val chapter = NovelChapter(ID, "n1", "c1", "Chapter 1", number = 1f)
+    }
+}
+
+/** An [SChapter] for the one adapter method that never reaches a novel source: [NovelSourceAdapter.getPageList]. */
+private val Chapterless = eu.kanade.tachiyomi.source.model.SChapter.create().apply {
+    url = "c1"
+    name = "Chapter 1"
 }

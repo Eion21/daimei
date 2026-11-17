@@ -259,6 +259,8 @@ class PrepareOfficialCatalogTest(unittest.TestCase):
 
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    # ---------- fake SDK tools (format-only, never crypto proof) ----------
+
     def _write_fake_aapt2(self, badging=None, xmltree=None) -> Path:
         path = self.tmp / "fake-aapt2.py"
         path.write_text(
@@ -315,6 +317,8 @@ class PrepareOfficialCatalogTest(unittest.TestCase):
             apks[pkg] = path
         return apks
 
+    # ---------- CLI driver ----------
+
     def _run_tool(
         self,
         apks: dict,
@@ -366,6 +370,8 @@ class PrepareOfficialCatalogTest(unittest.TestCase):
         leftovers = [p.name for p in self.tmp.iterdir() if p.name.startswith(".catalog")]
         self.assertEqual([], leftovers)
 
+    # ---------- help / basic CLI ----------
+
     def test_help(self) -> None:
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True,
@@ -386,6 +392,196 @@ class PrepareOfficialCatalogTest(unittest.TestCase):
         result = self._run_tool(apks, self.plan, self.out)
         self._assert_rejected(result, self.out, "exactly 3 --apk arguments are required")
 
+    # ---------- argument validation before SDK calls ----------
+
+    def test_invalid_commits_rejected_before_sdk_calls(self) -> None:
+        sentinel = self._write_sentinel_tool()
+        apks = self._make_apks()
+        for bad in [
+            "abc123",  # too short
+            "abc123" * 8,  # 48 hex, wrong length
+            "A" * 40,  # uppercase, noncanonical
+            "z" * 40,  # not hex
+            "0123456789abcdef0123456789abcdef0123456",  # 39 chars
+        ]:
+            result = self._run_tool(apks, self.plan, self.out, commit=bad, aapt2=sentinel, apksigner=sentinel)
+            self._assert_rejected(result, self.out, "invalid commit")
+            self._assert_no_temp_leftovers()
+        self.assertFalse((self.tmp / "sdk-called").exists(), "invalid commit must be rejected before SDK calls")
+
+    def test_invalid_base_paths_rejected_before_sdk_calls(self) -> None:
+        sentinel = self._write_sentinel_tool()
+        apks = self._make_apks()
+        for bad in [
+            "../escape",
+            "distribution/official/../x",
+            "/leading-slash",
+            "trailing/",
+            "a?query",
+            "a#fragment",
+            "back\\slash",
+            "percent%2Fencoded",
+            "scheme:path",
+            ".hidden/start",
+        ]:
+            result = self._run_tool(apks, self.plan, self.out, base_path=bad, aapt2=sentinel, apksigner=sentinel)
+            self._assert_rejected(result, self.out, "invalid base path")
+        self.assertFalse((self.tmp / "sdk-called").exists(), "invalid base path must be rejected before SDK calls")
+
+    def test_unclean_apk_basename_rejected(self) -> None:
+        apks = self._make_apks()
+        bad = self.tmp / "matcha signed.apk"
+        bad.write_bytes(b"x" * 16)
+        apks["app.novel.extension.matchanovels"] = bad
+        result = self._run_tool(apks, self.plan, self.out)
+        self._assert_rejected(result, self.out, "APK basename")
+
+    def test_duplicate_apk_basenames_rejected(self) -> None:
+        dir_a = self.tmp / "a"
+        dir_b = self.tmp / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        (dir_a / "twin.apk").write_bytes(b"a" * 16)
+        (dir_b / "twin.apk").write_bytes(b"b" * 16)
+        apks = self._make_apks()
+        apks["app.novel.extension.matchanovels"] = dir_a / "twin.apk"
+        apks["app.novel.extension.skynovels"] = dir_b / "twin.apk"
+        result = self._run_tool(apks, self.plan, self.out)
+        self._assert_rejected(result, self.out, "duplicate APK basename")
+
+    def test_duplicate_package_mapping_rejected(self) -> None:
+        apks = self._make_apks()
+        twin = self.tmp / "matcha-twin-signed.apk"
+        twin.write_bytes(apks["app.novel.extension.matchanovels"].read_bytes())
+        raw = [
+            f"app.novel.extension.matchanovels={apks['app.novel.extension.matchanovels']}",
+            f"app.novel.extension.matchanovels={twin}",
+            f"app.novel.extension.jabrascan={apks['app.novel.extension.jabrascan']}",
+        ]
+        result = self._run_tool(apks, self.plan, self.out, raw_apk_args=raw)
+        self._assert_rejected(result, self.out, "duplicate package mapping")
+
+    def test_unknown_mapping_package_rejected(self) -> None:
+        apks = self._make_apks()
+        del apks["app.novel.extension.jabrascan"]
+        apks["app.novel.extension.evil"] = self.tmp / "evil-signed.apk"
+        apks["app.novel.extension.evil"].write_bytes(b"e" * 16)
+        result = self._run_tool(apks, self.plan, self.out)
+        self._assert_rejected(result, self.out, "official-package")
+
+    def test_missing_mapping_package_rejected(self) -> None:
+        # A missing mapping shortens the argument list, so the count gate fires
+        # first; the missing-package set check in the parser is defense-in-depth
+        # for callers that bypass the CLI count gate.
+        apks = self._make_apks()
+        del apks["app.novel.extension.skynovels"]
+        result = self._run_tool(apks, self.plan, self.out)
+        self._assert_rejected(result, self.out, "exactly 3 --apk arguments are required")
+
+    # ---------- plan pinning ----------
+
+    def test_malformed_plan_json_rejected(self) -> None:
+        bad = self.tmp / "plan-bad.json"
+        bad.write_text("{not json", encoding="utf-8")
+        result = self._run_tool(self._make_apks(), bad, self.out)
+        self._assert_rejected(result, self.out, "plan JSON parse error")
+
+    def test_plan_wrong_protocol_rejected(self) -> None:
+        plan = self._mutated_plan(lambda d: d.update(protocol="other"))
+        result = self._run_tool(self._make_apks(), plan, self.out)
+        self._assert_rejected(result, self.out, "protocol")
+
+    def test_plan_wrong_schema_version_rejected(self) -> None:
+        plan = self._mutated_plan(lambda d: d.update(schemaVersion=1))
+        result = self._run_tool(self._make_apks(), plan, self.out)
+        self._assert_rejected(result, self.out, "schemaVersion")
+
+    def test_plan_extra_top_level_key_rejected(self) -> None:
+        plan = self._mutated_plan(lambda d: d.update(extra=True))
+        result = self._run_tool(self._make_apks(), plan, self.out)
+        self._assert_rejected(result, self.out, "schema keys")
+
+    def test_plan_unknown_package_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["packageName"] = "app.novel.extension.evil"
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "not an official Beta 1 extension")
+
+    def test_plan_duplicate_package_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][1]["packageName"] = document["extensions"][0]["packageName"]
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "exactly the three official packages")
+
+    def test_plan_wrong_certificate_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["currentSigners"] = ["0" * 64]
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "official extensions certificate")
+
+    def test_plan_wrong_api_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["novelApi"] = "1.3"
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "plan novelApi for app.novel.extension.matchanovels must be '1.1'")
+
+    def test_plan_unsupported_api_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][2]["novelApi"] = "1.4"
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "plan novelApi for app.novel.extension.jabrascan must be '1.3'")
+
+    def test_plan_wrong_source_ids_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["sourceIds"] = ["skynovels"]
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "plan sourceIds for app.novel.extension.matchanovels must be")
+
+    def test_plan_wrong_entry_classes_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["entryClasses"] = ["app.novel.extension.matchanovels.Other"]
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "plan entryClasses for app.novel.extension.matchanovels must be")
+
+    def test_plan_non_null_artifact_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["artifact"] = {
+                "url": "https://example.invalid/x.apk", "size": 1, "sha256": "0" * 64,
+            }
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "must be null")
+
+    def test_plan_nonpositive_version_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["longVersionCode"] = 0
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "longVersionCode")
+
+    def test_plan_string_version_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["longVersionCode"] = "3"
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "longVersionCode")
+
+    def test_plan_extra_entry_key_rejected(self) -> None:
+        def mutate(document):
+            document["extensions"][0]["unexpected"] = True
+
+        result = self._run_tool(self._make_apks(), self._mutated_plan(mutate), self.out)
+        self._assert_rejected(result, self.out, "schema keys")
+
+    # ---------- observation validation ----------
+
     def test_real_unsigned_apk_rejected(self) -> None:
         # Real apksigner against a real public unsigned APK: an honest
         # cryptographic refusal, no mocks.
@@ -399,6 +595,61 @@ class PrepareOfficialCatalogTest(unittest.TestCase):
         result = self._run_tool(self._make_apks(), self.plan, self.out, apksigner=apksigner)
         self._assert_rejected(result, self.out, "does not match plan")
 
+    def test_observed_version_code_mismatch_rejected(self) -> None:
+        badging = dict(BADGING)
+        badging["matcha-signed.apk"] = BADGING["matcha-signed.apk"].replace("versionCode='3'", "versionCode='99'")
+        aapt2 = self._write_fake_aapt2(badging=badging)
+        result = self._run_tool(self._make_apks(), self.plan, self.out, aapt2=aapt2)
+        self._assert_rejected(result, self.out, "versionCode 99 does not match plan")
+
+    def test_observed_package_mismatch_rejected(self) -> None:
+        badging = dict(BADGING)
+        badging["matcha-signed.apk"] = BADGING["matcha-signed.apk"].replace(
+            "app.novel.extension.matchanovels", "app.novel.extension.other",
+        )
+        aapt2 = self._write_fake_aapt2(badging=badging)
+        result = self._run_tool(self._make_apks(), self.plan, self.out, aapt2=aapt2)
+        self._assert_rejected(result, self.out, "does not match plan")
+
+    def test_observed_min_sdk_mismatch_rejected(self) -> None:
+        badging = dict(BADGING)
+        badging["matcha-signed.apk"] = BADGING["matcha-signed.apk"].replace("minSdkVersion:'26'", "minSdkVersion:'27'")
+        aapt2 = self._write_fake_aapt2(badging=badging)
+        result = self._run_tool(self._make_apks(), self.plan, self.out, aapt2=aapt2)
+        self._assert_rejected(result, self.out, "minSdk 27 does not match plan")
+
+    def test_observed_api_mismatch_rejected(self) -> None:
+        xmltree = dict(XMLTREE)
+        xmltree["jabrascan-signed.apk"] = XMLTREE["jabrascan-signed.apk"].replace(")=1.3", ")=1.1")
+        aapt2 = self._write_fake_aapt2(xmltree=xmltree)
+        result = self._run_tool(self._make_apks(), self.plan, self.out, aapt2=aapt2)
+        self._assert_rejected(result, self.out, "novelApi")
+
+    def test_observed_entry_class_mismatch_rejected(self) -> None:
+        xmltree = dict(XMLTREE)
+        xmltree["matcha-signed.apk"] = XMLTREE["matcha-signed.apk"].replace(
+            "MatchaNovelsSource", "OtherSource",
+        )
+        aapt2 = self._write_fake_aapt2(xmltree=xmltree)
+        result = self._run_tool(self._make_apks(), self.plan, self.out, aapt2=aapt2)
+        self._assert_rejected(result, self.out, "entryClass")
+
+    def test_missing_sdk_tool_rejected_cleanly(self) -> None:
+        result = self._run_tool(
+            self._make_apks(), self.plan, self.out,
+            aapt2=self.tmp / "nonexistent-aapt2", apksigner=self.tmp / "nonexistent-apksigner",
+        )
+        self._assert_rejected(result, self.out, "SDK tool failed to run")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_apk_file_rejected(self) -> None:
+        apks = self._make_apks()
+        apks["app.novel.extension.matchanovels"] = self.tmp / "does-not-exist.apk"
+        result = self._run_tool(apks, self.plan, self.out)
+        self._assert_rejected(result, self.out, "APK not found")
+
+    # ---------- output safety ----------
+
     def test_existing_catalog_never_overwritten(self) -> None:
         self.out.write_text("verified-sentinel", encoding="utf-8")
         result = self._run_tool(self._make_apks(), self.plan, self.out)
@@ -406,6 +657,83 @@ class PrepareOfficialCatalogTest(unittest.TestCase):
         self.assertIn("refusing to overwrite", result.stderr)
         self.assertEqual("verified-sentinel", self.out.read_text(encoding="utf-8"))
         self._assert_no_temp_leftovers()
+
+    # ---------- positive end-to-end (format only, not crypto proof) ----------
+
+    def test_positive_end_to_end_output_structure(self) -> None:
+        # Fake SDK tools verify FORMAT ONLY: no real signature exists here and
+        # no cryptographic success is claimed. The real signed happy path stays
+        # pending the human signing step. The produced structure must decode
+        # through the real NovelDistributionCatalogCodec (pinned on the Kotlin
+        # side by NovelDistributionCatalogTest's official finalize structure
+        # test, which mirrors this exact field layout).
+        apks = self._make_apks()
+        result = self._run_tool(apks, self.plan, self.out)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout)
+        self.assertTrue(self.out.exists())
+        self._assert_no_temp_leftovers()
+
+        def expected_entry(pkg, source_id, api, klass, apk):
+            version_code, version_name = PLAN_VERSIONS[pkg]
+            data = apk.read_bytes()
+            return {
+                "packageName": pkg,
+                "longVersionCode": version_code,
+                "versionName": version_name,
+                "novelApi": api,
+                "entryClasses": [klass],
+                "minSdk": 26,
+                "artifact": {
+                    "url": f"{RAW_BASE}/{TEST_COMMIT}/{DEFAULT_BASE_PATH}/{apk.name}",
+                    "size": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                },
+                "currentSigners": [OFFICIAL_CERT],
+                "sourceIds": [source_id],
+            }
+
+        expected = {
+            "protocol": "daimei-novel-distribution",
+            "schemaVersion": 2,
+            "repository": "Daimei-Extensions/extensions-repo",
+            "extensions": [
+                expected_entry(
+                    "app.novel.extension.matchanovels", "matchanovels", "1.1",
+                    "app.novel.extension.matchanovels.MatchaNovelsSource",
+                    apks["app.novel.extension.matchanovels"],
+                ),
+                expected_entry(
+                    "app.novel.extension.skynovels", "skynovels", "1.1",
+                    "app.novel.extension.skynovels.SkyNovelsSource",
+                    apks["app.novel.extension.skynovels"],
+                ),
+                expected_entry(
+                    "app.novel.extension.jabrascan", "jabrascan", "1.3",
+                    "app.novel.extension.jabrascan.JabraScanSource",
+                    apks["app.novel.extension.jabrascan"],
+                ),
+            ],
+        }
+        actual = json.loads(self.out.read_text(encoding="utf-8"))
+        self.assertEqual(expected, actual)
+
+        # Null optional fields from the plan must NOT be spread into the
+        # catalog: the real codec rejects an explicit "abis": null.
+        for entry in actual["extensions"]:
+            self.assertNotIn("abis", entry)
+        # source IDs, classes and APIs are preserved.
+        by_package = {e["packageName"]: e for e in actual["extensions"]}
+        self.assertEqual(["matchanovels"], by_package["app.novel.extension.matchanovels"]["sourceIds"])
+        self.assertEqual(["skynovels"], by_package["app.novel.extension.skynovels"]["sourceIds"])
+        self.assertEqual(["jabrascan"], by_package["app.novel.extension.jabrascan"]["sourceIds"])
+        self.assertEqual("1.3", by_package["app.novel.extension.jabrascan"]["novelApi"])
+        self.assertEqual(
+            ["app.novel.extension.jabrascan.JabraScanSource"],
+            by_package["app.novel.extension.jabrascan"]["entryClasses"],
+        )
+
+    # ---------- parser unit tests over embedded pass5 SDK lines ----------
 
     def test_badging_parser_reads_pass5_format(self) -> None:
         module = _load_module()

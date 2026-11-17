@@ -195,6 +195,48 @@ XMLTREE = {
     ),
 }
 
+
+def _plan_extensions():
+    facts = {
+        "app.novel.extension.matchanovels": (
+            "matchanovels", "1.1", ["app.novel.extension.matchanovels.MatchaNovelsSource"],
+        ),
+        "app.novel.extension.skynovels": (
+            "skynovels", "1.1", ["app.novel.extension.skynovels.SkyNovelsSource"],
+        ),
+        "app.novel.extension.jabrascan": (
+            "jabrascan", "1.3", ["app.novel.extension.jabrascan.JabraScanSource"],
+        ),
+    }
+    extensions = []
+    for pkg, (source_id, api, classes) in facts.items():
+        version_code, version_name = PLAN_VERSIONS[pkg]
+        extensions.append(
+            {
+                "packageName": pkg,
+                "longVersionCode": version_code,
+                "versionName": version_name,
+                "novelApi": api,
+                "entryClasses": classes,
+                "minSdk": 26,
+                "abis": None,
+                "sourceIds": [source_id],
+                "currentSigners": [OFFICIAL_CERT],
+                "artifact": None,
+            }
+        )
+    return extensions
+
+
+def _plan_document():
+    return {
+        "protocol": "daimei-novel-distribution",
+        "schemaVersion": 2,
+        "repository": "Daimei-Extensions/extensions-repo",
+        "extensions": _plan_extensions(),
+    }
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("prepare_official_catalog", SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -203,6 +245,168 @@ def _load_module():
 
 
 class PrepareOfficialCatalogTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="s39-catalog-test-"))
+        self.addCleanup(self._cleanup)
+        self.plan = self.tmp / "plan.json"
+        self.plan.write_text(json.dumps(_plan_document(), indent=2), encoding="utf-8")
+        self.aapt2 = self._write_fake_aapt2()
+        self.apksigner = self._write_fake_apksigner()
+        self.out = self.tmp / "catalog.json"
+
+    def _cleanup(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_fake_aapt2(self, badging=None, xmltree=None) -> Path:
+        path = self.tmp / "fake-aapt2.py"
+        path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "BADGING = " + repr(badging or BADGING) + "\n"
+            "XMLTREE = " + repr(xmltree or XMLTREE) + "\n"
+            "args = sys.argv[1:]\n"
+            "data = Path(args[-1]).name\n"
+            "if 'badging' in args:\n"
+            "    sys.stdout.write(BADGING.get(data, ''))\n"
+            "else:\n"
+            "    sys.stdout.write(XMLTREE.get(data, ''))\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        return path
+
+    def _write_fake_apksigner(self, digest: str = OFFICIAL_CERT) -> Path:
+        path = self.tmp / "fake-apksigner.py"
+        path.write_text(
+            "#!/usr/bin/env python3\n"
+            "DIGEST = " + repr(digest) + "\n"
+            "print('Verifies')\n"
+            "print('Verified using v1 scheme (JAR signing): true')\n"
+            "print('Signer #1 certificate SHA-256 digest: ' + DIGEST)\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        return path
+
+    def _write_sentinel_tool(self) -> Path:
+        path = self.tmp / "sentinel-tool.py"
+        path.write_text(
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            "Path(__file__).resolve().with_name('sdk-called').write_text('called')\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        return path
+
+    def _make_apks(self) -> dict:
+        seeds = {
+            "matcha-signed.apk": b"matcha-signed-format-only-bytes",
+            "skynovels-signed.apk": b"skynovels-signed-format-only-bytes",
+            "jabrascan-signed.apk": b"jabrascan-signed-format-only-bytes",
+        }
+        apks = {}
+        for pkg, name in PACKAGE_TO_BASENAME.items():
+            path = self.tmp / name
+            path.write_bytes(seeds[name] * 4)
+            apks[pkg] = path
+        return apks
+
+    def _run_tool(
+        self,
+        apks: dict,
+        plan: Path,
+        out: Path,
+        commit: str = TEST_COMMIT,
+        base_path: str = DEFAULT_BASE_PATH,
+        aapt2=None,
+        apksigner=None,
+        raw_apk_args=None,
+    ) -> subprocess.CompletedProcess:
+        argv = [
+            sys.executable, str(SCRIPT),
+            "--plan", str(plan),
+            "--commit", commit,
+            "--out", str(out),
+            "--aapt2", str(aapt2 or self.aapt2),
+            "--apksigner", str(apksigner or self.apksigner),
+        ]
+        if base_path is not None:
+            argv += ["--base-path", base_path]
+        if raw_apk_args is not None:
+            for raw in raw_apk_args:
+                argv += ["--apk", raw]
+        else:
+            for pkg, path in apks.items():
+                argv += ["--apk", f"{pkg}={path}"]
+        return subprocess.run(argv, capture_output=True, text=True)
+
+    def _mutated_plan(self, mutate) -> Path:
+        document = _plan_document()
+        mutate(document)
+        path = self.tmp / "plan-mutated.json"
+        path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+        return path
+
+    def _assert_rejected(
+        self,
+        result: subprocess.CompletedProcess,
+        out: Path,
+        stderr_fragment: str,
+    ) -> None:
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout)
+        self.assertIn(stderr_fragment, result.stderr)
+        self.assertFalse(out.exists(), "rejection must not write output")
+
+    def _assert_no_temp_leftovers(self) -> None:
+        leftovers = [p.name for p in self.tmp.iterdir() if p.name.startswith(".catalog")]
+        self.assertEqual([], leftovers)
+
+    def test_help(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True,
+        )
+        self.assertEqual(0, result.returncode)
+        self.assertIn("noninstallable", result.stdout)
+
+    def test_missing_required_args_rejected(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)], capture_output=True, text=True,
+        )
+        self.assertEqual(2, result.returncode)
+        self.assertIn("usage:", result.stderr)
+
+    def test_wrong_apk_count_rejected(self) -> None:
+        apks = self._make_apks()
+        del apks["app.novel.extension.jabrascan"]
+        result = self._run_tool(apks, self.plan, self.out)
+        self._assert_rejected(result, self.out, "exactly 3 --apk arguments are required")
+
+    def test_real_unsigned_apk_rejected(self) -> None:
+        # Real apksigner against a real public unsigned APK: an honest
+        # cryptographic refusal, no mocks.
+        apks = self._make_apks()
+        apks["app.novel.extension.matchanovels"] = UNSIGNED_MATCHA
+        result = self._run_tool(apks, self.plan, self.out, aapt2=AAPT2, apksigner=APKSIGNER)
+        self._assert_rejected(result, self.out, "unsigned or signature is invalid")
+
+    def test_wrong_observed_certificate_rejected(self) -> None:
+        apksigner = self._write_fake_apksigner(digest="0" * 64)
+        result = self._run_tool(self._make_apks(), self.plan, self.out, apksigner=apksigner)
+        self._assert_rejected(result, self.out, "does not match plan")
+
+    def test_existing_catalog_never_overwritten(self) -> None:
+        self.out.write_text("verified-sentinel", encoding="utf-8")
+        result = self._run_tool(self._make_apks(), self.plan, self.out)
+        self.assertEqual(1, result.returncode)
+        self.assertIn("refusing to overwrite", result.stderr)
+        self.assertEqual("verified-sentinel", self.out.read_text(encoding="utf-8"))
+        self._assert_no_temp_leftovers()
+
     def test_badging_parser_reads_pass5_format(self) -> None:
         module = _load_module()
         parsed = module._parse_badging(BADGING["matcha-signed.apk"])

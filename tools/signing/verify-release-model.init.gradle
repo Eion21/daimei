@@ -1,0 +1,30 @@
+// Public Gradle DSL inspection only: never open stores or print credentials.
+def targets = [':app', ':novel-matchanovels-extension', ':novel-skynovels-extension', ':novel-jabrascan-extension']
+gradle.beforeProject { p ->
+    if (targets.contains(p.path)) {
+        p.afterEvaluate {
+            def android = p.extensions.getByName('android')
+            p.tasks.register('verifyDaimeiReleaseSigningPolicy') {
+                doLast {
+                    def release = android.buildTypes.getByName('release')
+                    def debug = android.buildTypes.getByName('debug')
+                    def observed = [project: p.path, releaseSigning: release.signingConfig?.name, debugSigning: debug.signingConfig?.name]
+                    println('DAIMEI_SIGNING_MODEL ' + groovy.json.JsonOutput.toJson(observed))
+                    assert release.signingConfig == null : 'Release must be unsigned; no Debug or official credentials inside Gradle'
+                    assert debug.signingConfig != null : 'Debug signing must remain configured'
+                    if (p.path == ':app') {
+                        assert android.defaultConfig.applicationId == 'app.daimei'
+                        assert android.buildTypes.getByName('s39Qa').applicationIdSuffix == '.dev.s39qa'
+                        assert android.buildTypes.getByName('s39Qa').signingConfig == debug.signingConfig
+                        ['foss', 'nightly', 'benchmark'].each { name ->
+                            assert android.buildTypes.getByName(name).signingConfig == debug.signingConfig : 'Unrequested variant signing changed: ' + name
+                        }
+                    } else {
+                        def expected = [':novel-matchanovels-extension':'app.novel.extension.matchanovels', ':novel-skynovels-extension':'app.novel.extension.skynovels', ':novel-jabrascan-extension':'app.novel.extension.jabrascan']
+                        assert android.defaultConfig.applicationId == expected[p.path]
+                    }
+                }
+            }
+        }
+    }
+}

@@ -7,6 +7,10 @@ android {
     namespace = "app.novel.extension.jabrascan"
 
     buildTypes {
+        // Official Release is signed separately by the human, never by Gradle.
+        getByName("release") {
+            signingConfig = null
+        }
         getByName("debug") {
             if (providers.gradleProperty("s32PdfIsolated").orNull == "true") {
                 applicationIdSuffix = ".s32u2"

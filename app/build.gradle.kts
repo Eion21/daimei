@@ -187,6 +187,12 @@ android {
             matchingFallbacks.addAll(commonMatchingFallbacks)
         }
 
+        // Copy the legacy settings above before detaching Release only. Debug, S39 QA,
+        // foss, nightly and benchmark keep their existing signing. Official Release is
+        // packaged unsigned; the human signs separately without Gradle credentials.
+        // See docs/official-release-signing.md.
+        release.signingConfig = null
+
         if (Config.includeTelemetry) {
             configureEach {
                 configure<CrashlyticsExtension> {

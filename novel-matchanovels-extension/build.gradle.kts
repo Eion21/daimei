@@ -11,6 +11,13 @@ android {
         versionCode = 3
         versionName = "1.0.2"
     }
+
+    buildTypes {
+        // Official Release is signed separately by the human, never by Gradle.
+        getByName("release") {
+            signingConfig = null
+        }
+    }
 }
 
 // The host is a Kotlin application: it already ships the standard library, and DelegateLastClassLoaderCompat

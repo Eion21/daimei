@@ -10,6 +10,14 @@ Daimei is an Android light novel reader fork of Mihon 0.21.2. It builds on Mihon
 - Organize reading in the inherited library, and use local backup and restore.
 - To build or contribute, start with the [contributing guide](CONTRIBUTING.md). Use a local checkout and contact the Daimei maintainer through your existing channel for fork-specific questions or reports.
 
+## Beta1 distribution (preparation only)
+
+Public identity: `app.daimei`, `0.1.0-beta.1` /code2, Android8.0/API26 minimum and target36. Public S39 installation remains fail-closed on API26–27. ARM64 and universal signed APKs will be delivered through [Eion21/daimei Releases](https://github.com/Eion21/daimei/releases); they are not published yet. Do not install unsigned/QA/Debug artifacts as a public release. Differently signed installations are not advertised as compatible updates; do not uninstall or delete data to force them.
+
+- [Spanish Beta1 notes and installation/add-catalog instructions](docs/releases/v0.1.0-beta.1.es.md).
+- [Exact human signing and read-only verification](docs/beta1-human-signing.md).
+- [Immutable extension hosting and ordered publication plan](docs/beta1-publication-plan.md).
+
 Daimei's visible branding does not imply a global rename of inherited internal identifiers or protocol headers. In particular, Kitsu's runtime and Apollo introspection User-Agent values retain the inherited `Mihon v... (applicationId)` form as a conservative compatibility choice: there is no integration evidence supporting a cosmetic change. Mihon 0.21.2's Cloudflare fix is historical context, not proof that the literal name is mandatory. OAuth client fields and other trackers are unchanged.
 
 ## History and attribution

@@ -55,6 +55,29 @@ Public certificate pins:
 
 Only after real verification, preserve its public JSON and derive distribution SHA256SUMS from its **signed** `sha256`/`filename` rows. Never use `UNSIGNED-SHA256SUMS` for releases. App release sums cover its two APKs; the extension artifact commit/catalog use their three signed hashes/sizes. No final sums or installable catalog exist yet.
 
+After signing, the following read-only verification/public-metadata commands may be used (no signer or password prompt is involved). `noclobber` refuses existing metadata output files:
+
+```sh
+(
+  set -eu
+  set -o noclobber
+  python3 -B tools/signing/verify_beta1_signed.py \
+    --manifest "$WORKSET/manifest.json" --signed-dir "$WORKSET/signed" \
+    --build-tools '/home/jervis/Proyectos/Desarrollo/Android/Sdk/build-tools/36.0.0' \
+    > "$WORKSET/verified-signed.json"
+  python3 - "$WORKSET/verified-signed.json" > "$WORKSET/SHA256SUMS" <<'PY'
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report['status'] == 'SIGNED_SET_VERIFIED'
+for apk in report['artifacts']:
+    if apk['packageName'] == 'app.daimei':
+        print(apk['sha256'] + '  ' + apk['filename'])
+PY
+)
+```
+
+The final SHA256SUMS names match the two flat app Release asset names. The verified JSON retains the extension hashes/sizes for the later immutable artifact commit/catalog. SHA256SUMS is generated only after real verification succeeds. A failed redirected check can leave an empty verified-signed.json (public metadata only); that is not success and must never be used as evidence.
+
 ## Publication remains a separate authorization
 
 Sequence: extension source → three verified immutable extension APKs → real full commit-pinned RawHTTPS URLs/served-byte checks → stable schema2 official catalog → Daimei source/tag selection → two app APKs and Spanish Beta1 Release. No push, tag, public Release or CI change is authorized. The proposed app tag targets the built source commit, not a guessed later HEAD; if a different source is deliberately chosen, its binaries/provenance must be rebuilt before publication.

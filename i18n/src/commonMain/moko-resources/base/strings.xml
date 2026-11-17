@@ -1160,5 +1160,11 @@
     <string name="s39_execution_consent">Allow code from this exact installed package and version to run inside Daimei? Fresh installed identity and the complete current signer set are checked again. Trust is process-local; an Android install alone does not grant it.\nPackage: %1$s\nCode: %2$s\nSigner SHA-256 set:\n%3$s</string>
     <string name="s39_continue">Continue</string>
     <string name="s39_cancel">Cancel</string>
+    <string name="s39_public_active">Public installation is active. Official packages from the pinned catalog are eligible for install and update.</string>
+    <string name="s39_qa_active">QA fixture installation is active.</string>
+    <string name="s39_update">Update</string>
+    <string name="s39_update_available">A newer version is available. Update keeps the same package and source IDs.</string>
+    <string name="s39_installed_same_version">This version is installed.</string>
+    <string name="s39_end_session">End execution session</string>
     <string name="daimei_official_app_releases">Official Daimei releases</string>
 </resources>

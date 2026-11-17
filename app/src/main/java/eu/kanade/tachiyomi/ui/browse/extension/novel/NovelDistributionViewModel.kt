@@ -58,6 +58,9 @@ internal data class NovelDistributionUiState(
     val operationSigners: String? = null,
     val phase: NovelInstallPhase? = null,
     val execution: NovelDistributionExecutionConsent.Result? = null,
+    val installerActive: Boolean = false,
+    val publicActive: Boolean = false,
+    val endedSessions: Set<String> = emptySet(),
 )
 
 @Inject
@@ -74,7 +77,10 @@ internal class NovelDistributionViewModel(
     private var prepared: Pair<NovelDistributionEntry, NovelQuarantinedArtifact>? = null
     @Volatile private var cancellation: NovelArtifactCancellation? = null
     @Volatile private var downloader: NovelArtifactDownloader? = null
-    val experimental: Boolean = NovelAndroidInstallBridge.forQaExperiment(app).controlledTestActivation
+    private val hostBridge = NovelAndroidInstallBridge.forHost(app)
+    val experimental: Boolean = hostBridge.controlledTestActivation && NovelAndroidInstallBridge.forQaExperiment(app).controlledTestActivation
+    val publicActive: Boolean = hostBridge.publicActivationActive
+    val installerActive: Boolean = hostBridge.controlledTestActivation
 
     private val enrollment = NovelDistributionEnrollment(object : NovelDistributionEnrollment.Backend {
         override fun enrollAndFetch(repositoryUrl: String): NovelDistributionCatalog {
@@ -97,7 +103,7 @@ internal class NovelDistributionViewModel(
                 }) {
                     is NovelArtifactDownloadResult.Success -> {
                         prepared = entry to result.artifact
-                        state.update { it.copy(preparedPackage = entry.packageName, installEligible = approvedFixture(entry)) }
+                        state.update { it.copy(preparedPackage = entry.packageName, installEligible = installEligible(entry)) }
                     }
                     is NovelArtifactDownloadResult.Failure -> state.update { it.copy(error = result.reason.name) }
                 }
@@ -109,14 +115,18 @@ internal class NovelDistributionViewModel(
     init {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                state.update { it.copy(repositories = preferences.getStringSet("repositories", emptySet()).orEmpty().toSet()) }
+                state.update { it.copy(
+                    repositories = preferences.getStringSet("repositories", emptySet()).orEmpty().toSet(),
+                    installerActive = installerActive,
+                    publicActive = publicActive,
+                ) }
                 preferences.getString("last_operation", null)?.let { restore ->
                     updateOutcome(NovelInteractiveInstallRuntime.status(app, restore))
                 }
             } catch (_: Exception) {
-                state.update { it.copy(error = "RECOVERY_REQUIRED") }
+                state.update { it.copy(error = "RECOVERY_REQUIRED", installerActive = installerActive, publicActive = publicActive) }
             } finally {
-                state.update { it.copy(busy = false) }
+                state.update { it.copy(busy = false, installerActive = installerActive, publicActive = publicActive) }
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -171,9 +181,29 @@ internal class NovelDistributionViewModel(
         NovelInstallPhase.COMMITTING, NovelInstallPhase.PENDING_USER_ACTION,
     )
 
-    private fun approvedFixture(entry: NovelDistributionEntry): Boolean = experimental &&
-        entry.packageName == "app.novel.extension.fixtures" && entry.sha256 == BuildConfig.S39_FIXTURE_APK_SHA256 &&
-        entry.currentSigners == BuildConfig.S39_FIXTURE_SIGNERS.split(',').filter(String::isNotEmpty).toSet()
+    private fun installEligible(entry: NovelDistributionEntry): Boolean {
+        if (experimental) {
+            return entry.packageName == "app.novel.extension.fixtures" &&
+                entry.sha256 == BuildConfig.S39_FIXTURE_APK_SHA256 &&
+                entry.currentSigners == BuildConfig.S39_FIXTURE_SIGNERS.split(',').filter(String::isNotEmpty).toSet()
+        }
+        return publicActive && isOfficial(entry)
+    }
+
+    private fun isOfficial(entry: NovelDistributionEntry): Boolean =
+        entry.packageName in setOf(
+            "app.novel.extension.matchanovels",
+            "app.novel.extension.skynovels",
+            "app.novel.extension.jabrascan",
+        ) && entry.currentSigners == setOf(
+            "2782d342e313fe5cb3ca81996f084661a4eb21bbf11e139d8c3913edacf75408",
+        )
+
+    private fun installedVersion(packageName: String): Long? =
+        state.value.installed.firstOrNull { it.packageName == packageName }?.version
+
+    private fun isUpdate(entry: NovelDistributionEntry): Boolean =
+        publicActive && isOfficial(entry) && installedVersion(entry.packageName)?.let { it < entry.longVersionCode } == true
 
     fun download(entry: NovelDistributionEntry, approvedOrigin: String?) {
         if (state.value.busy || pendingOperation()) return
@@ -185,7 +215,7 @@ internal class NovelDistributionViewModel(
                 }
             } finally {
                 cancellation = null
-                state.update { it.copy(progress = null) }
+                state.update { it.copy(progress = null, installEligible = installEligible(entry)) }
             }
         }
     }
@@ -196,7 +226,7 @@ internal class NovelDistributionViewModel(
     fun installPrepared(explicitConsent: Boolean) = runAction {
         if (!explicitConsent || pendingOperation()) return@runAction
         val (entry, artifact) = prepared ?: return@runAction
-        if (!approvedFixture(entry)) {
+        if (!installEligible(entry)) {
             state.update { it.copy(error = "PRODUCTION_DISABLED") }
             return@runAction
         }
@@ -225,7 +255,7 @@ internal class NovelDistributionViewModel(
     }
 
     fun openPermissionSettings() {
-        if (!experimental || state.value.phase != NovelInstallPhase.PERMISSION_REQUIRED) return
+        if (!installerActive || state.value.phase != NovelInstallPhase.PERMISSION_REQUIRED) return
         app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
@@ -256,10 +286,23 @@ internal class NovelDistributionViewModel(
         updateOutcome(NovelInteractiveInstallRuntime.status(app, operation))
     }
 
+    fun endSession(packageName: String, versionCode: Long) = runAction {
+        if (!manager.revokeNovelExecutionConsent(packageName, versionCode)) {
+            // A missing or mismatched managed record, or a package that is not a managed novel extension:
+            // report the failure instead of faking a successful end. Nothing was revoked and nothing is marked ended.
+            state.update { it.copy(error = "REVOKE_FAILED") }
+            return@runAction
+        }
+        // The retraction inside the manager reloads extensions, so the flows the init collector watches
+        // refresh the actual installed/loaded rows; only a real revoke marks the session ended.
+        state.update { it.copy(endedSessions = it.endedSessions + packageName) }
+    }
+
     private fun updateOutcome(outcome: NovelInstallOutcome) {
         if (outcome.operationId == null) {
             state.update { it.copy(error = outcome.failure?.name,
-                phase = if (it.operationId == null) outcome.phase else it.phase) }
+                phase = if (it.operationId == null) outcome.phase else it.phase,
+                installerActive = installerActive, publicActive = publicActive) }
             return
         }
         val record = outcome.operationId?.let { NovelInteractiveInstallRuntime.recordedRequest(app, it) }
@@ -267,6 +310,7 @@ internal class NovelDistributionViewModel(
         state.update { it.copy(operationId = outcome.operationId, operationPackage = record?.packageName,
             operationVersion = record?.versionCode, operationSigners = record?.currentSigners?.sorted()?.joinToString("\n"),
             phase = outcome.phase, error = outcome.failure?.name,
+            installerActive = installerActive, publicActive = publicActive,
             execution = when {
                 it.operationId != outcome.operationId || outcome.phase !in setOf(
                     NovelInstallPhase.INSTALLED_HELD, NovelInstallPhase.INSTALLED_UNRECOGNIZED,

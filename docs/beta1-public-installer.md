@@ -82,6 +82,35 @@ loader-gate behavior unchanged. The plain adapter constructors keep the exact in
 are given; only the loader seam wraps. New registry lookups after the retraction also miss,
 because unregistration still runs.
 
+## Strings
+
+New base strings (with Spanish translations):
+
+- `s39_public_active`
+- `s39_qa_active`
+- `s39_update`
+- `s39_update_available`
+- `s39_installed_same_version`
+- `s39_end_session`
+
+## Tests
+
+- `NovelInstallActivationTest` — host identity (wrong, multi-signer, rotated-history,
+  unavailable and legacy 26/27 observations all fail closed; only the exact singleton
+  activates), signer pinning, allowed packages, fail-closed behavior.
+- `NovelPublicSessionEndTest` — lease revocation, durable DENY, restart blocking, monotonic
+  update, and rejection of a higher-version enroll carrying a different signer set.
+- `NovelSourceAdapterTest` — the retained-reference guard: valid lease delegates, revoke
+  blocks the same held adapter reference without delegate side effects, the loader-seam
+  `novelSource` (the registry-exposed instance) is likewise blocked on all five contract calls
+  including `getChapterContent`, stays blocked across restart and version update while
+  unrelated leases keep executing, legacy constructors keep the original instance, and
+  unguarded adapters keep legacy behavior.
+- `NovelInteractiveInstallCoordinatorTest` — update proceeds only from shared, non-split,
+  complete-signer facts at a strictly lower version; private/split/legacy/higher/mismatched
+  facts reject before any session.
+- Existing QA and hold-store tests are preserved.
+
 ## Public identity and application updates
 
 Beta 1 keeps the established public package `app.daimei` and uses version `0.1.0-beta.1` / code `2` (previous local code `1`). The anonymous public GitHub release/tag preflight found neither published releases nor tags; this is not a claim about unknown sideloads. Debug (`.dev`), isolated QA (`.dev.s39qa`), foss, nightly and benchmark suffixes and signing remain unchanged. Never replace a Debug installation with an official signature.

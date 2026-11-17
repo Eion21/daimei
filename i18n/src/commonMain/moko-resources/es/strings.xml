@@ -951,5 +951,11 @@
     <string name="s39_execution_consent">¿Permitir que el código de este paquete y versión instalados se ejecute dentro de Daimei? Se vuelve a comprobar la identidad instalada y el conjunto completo de firmantes actuales. La autorización de ejecución dura este proceso; instalar en Android no la concede.\nPaquete: %1$s\nCódigo: %2$s\nConjunto SHA-256 de firmantes:\n%3$s</string>
     <string name="s39_continue">Continuar</string>
     <string name="s39_cancel">Cancelar</string>
+    <string name="s39_public_active">La instalación pública está activa. Los paquetes oficiales del catálogo fijado son elegibles para instalar y actualizar.</string>
+    <string name="s39_qa_active">La instalación de la extensión desechable QA está activa.</string>
+    <string name="s39_update">Actualizar</string>
+    <string name="s39_update_available">Hay una versión más reciente disponible. La actualización conserva el mismo paquete y los IDs de fuentes.</string>
+    <string name="s39_installed_same_version">Esta versión está instalada.</string>
+    <string name="s39_end_session">Finalizar sesión de ejecución</string>
     <string name="daimei_official_app_releases">Versiones oficiales de Daimei</string>
 </resources>

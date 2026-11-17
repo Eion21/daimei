@@ -58,7 +58,13 @@ class NovelDistributionScreen : Screen() {
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 item {
                     Text(stringResource(MR.strings.s39_explanation))
-                    Text(stringResource(MR.strings.s39_public_blocked), color = MaterialTheme.colorScheme.error)
+                    if (state.publicActive) {
+                        Text(stringResource(MR.strings.s39_public_active), color = MaterialTheme.colorScheme.primary)
+                    } else if (state.installerActive) {
+                        Text(stringResource(MR.strings.s39_qa_active), color = MaterialTheme.colorScheme.tertiary)
+                    } else {
+                        Text(stringResource(MR.strings.s39_public_blocked), color = MaterialTheme.colorScheme.error)
+                    }
                     OutlinedTextField(value = url, onValueChange = { if (it.length <= 2048) url = it },
                         modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(MR.strings.s39_repository_url)) }, singleLine = true)
                     Button(onClick = { repositoryConsent = url }, enabled = !state.busy && url.isNotBlank()) {
@@ -76,15 +82,29 @@ class NovelDistributionScreen : Screen() {
                     if (state.entries.isEmpty()) Text(stringResource(MR.strings.s39_empty))
                 }
                 items(state.entries, key = { "entry:${it.packageName}" }) { entry ->
+                    val installed = state.installed.firstOrNull { it.packageName == entry.packageName }
+                    val isUpdate = state.publicActive && installed != null && installed.version < entry.longVersionCode
+                    val isInstalled = installed != null && installed.version == entry.longVersionCode
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(entry.packageName, style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(MR.strings.s39_version, entry.versionName, entry.longVersionCode.toString()))
                         Text(stringResource(MR.strings.s39_origin, artifactOrigin(entry)))
                         Text(stringResource(MR.strings.s39_api, entry.novelApi))
-                        Button(onClick = { artifactConsent = entry }, enabled = !state.busy && !pending) {
-                            Text(stringResource(MR.strings.s39_download))
+                        if (isInstalled) {
+                            Text(stringResource(MR.strings.s39_installed_same_version))
+                        } else if (isUpdate) {
+                            Text(stringResource(MR.strings.s39_update_available))
+                            Button(onClick = { artifactConsent = entry }, enabled = !state.busy && !pending) {
+                                Text(stringResource(MR.strings.s39_update))
+                            }
+                        } else if (state.publicActive || state.installerActive) {
+                            Button(onClick = { artifactConsent = entry }, enabled = !state.busy && !pending) {
+                                Text(stringResource(MR.strings.s39_download))
+                            }
                         }
-                        Text(stringResource(MR.strings.s39_update_blocked))
+                        if (!state.publicActive) {
+                            Text(stringResource(MR.strings.s39_update_blocked))
+                        }
                     }
                 }
                 item {
@@ -117,6 +137,11 @@ class NovelDistributionScreen : Screen() {
                 items(state.installed, key = { "installed:${it.packageName}" }) { installed ->
                     Text("${installed.packageName} · ${installed.version}")
                     Text(stringResource(if (installed.loaded) MR.strings.s39_recognized else MR.strings.s39_not_recognized))
+                    if (state.publicActive && installed.loaded && installed.packageName !in state.endedSessions) {
+                        TextButton(onClick = { model.endSession(installed.packageName, installed.version) }, enabled = !state.busy) {
+                            Text(stringResource(MR.strings.s39_end_session))
+                        }
+                    }
                 }
             }
         }
